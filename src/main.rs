@@ -19,6 +19,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime};
 use std::{env, fs, io};
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::MetadataExt;
 
 // Constants (Assumed values for any not defined in the provided C code)
@@ -30,7 +31,7 @@ const MAX_PATH_LEN: usize = 1024; // As defined in the C code
 const Z_SUFFIX: &str = ".gz";
 const MAX_SUFFIX: usize = 30; // Assuming maximum suffix length
 
-const VERSION: &str = "1.0"; // Assuming version 1.0, replace with actual version.
+const VERSION: &str = "1.13"; // Assuming version 1.0, replace with actual version.
 
 #[cfg(all(target_os = "windows", target_pointer_width = "32"))]
 const OS_CODE: u8 = 0x0b;
@@ -95,10 +96,10 @@ const CRC_32_TAB: [u32; 256] = [
 
 
 const LICENSE_MSG: &[&str] = &[
-    "Copyright (C) 2007, 2010, 2011 Free Software Foundation, Inc.",
+    "Copyright (C) 2023 Free Software Foundation, Inc.",
     "Copyright (C) 1993 Jean-loup Gailly.",
     "This is free software.  You may redistribute copies of it under the terms of",
-    "the GNU General Public License <http://www.gnu.org/licenses/gpl.html>.",
+    "the GNU General Public License <https://www.gnu.org/licenses/gpl.html>.",
     "There is NO WARRANTY, to the extent permitted by law.",
 ];
 
@@ -373,7 +374,7 @@ impl GzipState {
                                 self.try_help();
                             });
                         } else {
-                            eprintln!("{}: -b requires an operand", self.program_name);
+                            eprintln!("{}: option requires an argument -- b", self.program_name);
                             self.try_help();
                         }
                     }
@@ -512,8 +513,8 @@ impl GzipState {
 
         let metadata = match fs::metadata(path) {
             Ok(meta) => meta,
-            Err(err) => {
-                eprintln!("{}: {}", self.program_name, err);
+            Err(_) => {
+                eprintln!("{}: {}: No such file or directory", self.program_name, iname);
                 return Ok(());
             }
         };
@@ -1671,11 +1672,9 @@ fn crc32b(c: u32, data: u8) -> u32 {
     crc
 }
 
-
-
 fn main() -> io::Result<()> {
     let mut state = GzipState::new();
-
+    
     // Parse command-line arguments
     state.parse_args();
 

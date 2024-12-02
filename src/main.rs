@@ -19,7 +19,6 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime};
 use std::{env, fs, io};
-#[cfg(target_os = "linux")]
 use std::os::unix::fs::MetadataExt;
 
 // Constants (Assumed values for any not defined in the provided C code)
@@ -31,7 +30,7 @@ const MAX_PATH_LEN: usize = 1024; // As defined in the C code
 const Z_SUFFIX: &str = ".gz";
 const MAX_SUFFIX: usize = 30; // Assuming maximum suffix length
 
-const VERSION: &str = "1.13"; // Assuming version 1.0, replace with actual version.
+const VERSION: &str = "1.0"; // Assuming version 1.0, replace with actual version.
 
 #[cfg(all(target_os = "windows", target_pointer_width = "32"))]
 const OS_CODE: u8 = 0x0b;
@@ -96,10 +95,10 @@ const CRC_32_TAB: [u32; 256] = [
 
 
 const LICENSE_MSG: &[&str] = &[
-    "Copyright (C) 2023 Free Software Foundation, Inc.",
+    "Copyright (C) 2007, 2010, 2011 Free Software Foundation, Inc.",
     "Copyright (C) 1993 Jean-loup Gailly.",
     "This is free software.  You may redistribute copies of it under the terms of",
-    "the GNU General Public License <https://www.gnu.org/licenses/gpl.html>.",
+    "the GNU General Public License <http://www.gnu.org/licenses/gpl.html>.",
     "There is NO WARRANTY, to the extent permitted by law.",
 ];
 
@@ -173,10 +172,7 @@ struct GzipState {
     ascii: bool,
     to_stdout: bool,
     decompress: bool,
-<<<<<<< HEAD
     test_huft: bool,
-=======
->>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
     force: i32,
     keep: bool,
     no_name: Option<bool>, // None represents -1 in C code
@@ -249,10 +245,7 @@ impl GzipState {
             decompress: false,
             force: 0,
             keep: false,
-<<<<<<< HEAD
             test_huft: false,
-=======
->>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
             no_name: None, // None represents -1 (undefined) in the C code
             no_time: None, // None represents -1 (undefined) in the C code
             recursive: false,
@@ -374,19 +367,16 @@ impl GzipState {
                                 self.try_help();
                             });
                         } else {
-                            eprintln!("{}: option requires an argument -- b", self.program_name);
+                            eprintln!("{}: -b requires an operand", self.program_name);
                             self.try_help();
                         }
                     }
                     "c" => self.to_stdout = true,
                     "d" => self.decompress = true,
-<<<<<<< HEAD
                     "H" => {
                         self.decompress = true;
                         self.test_huft = true;
                     }
-=======
->>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
                     "f" => self.force += 1,
                     "h" | "H" => {
                         self.help();
@@ -513,8 +503,8 @@ impl GzipState {
 
         let metadata = match fs::metadata(path) {
             Ok(meta) => meta,
-            Err(_) => {
-                eprintln!("{}: {}: No such file or directory", self.program_name, iname);
+            Err(err) => {
+                eprintln!("{}: {}", self.program_name, err);
                 return Ok(());
             }
         };
@@ -933,11 +923,7 @@ impl GzipState {
 
             magic[8] = self.get_byte(input)?;
             magic[9] = self.get_byte(input)?;
-<<<<<<< HEAD
             // eprintln!("{:?}, magic", &magic[0..10]);
-=======
-            eprintln!("{:?}, magic", &magic[0..10]);
->>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
             if flags & HEADER_CRC != 0 {
 //                 eprintln!("{:?}, magic", &magic[0..10]);
                 magic[2] = DEFLATED as u8;
@@ -1672,9 +1658,11 @@ fn crc32b(c: u32, data: u8) -> u32 {
     crc
 }
 
+
+
 fn main() -> io::Result<()> {
     let mut state = GzipState::new();
-    
+
     // Parse command-line arguments
     state.parse_args();
 

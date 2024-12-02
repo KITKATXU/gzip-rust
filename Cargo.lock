@@ -3,6 +3,7 @@
 version = 3
 
 [[package]]
+<<<<<<< HEAD
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18,6 +19,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
 
 [[package]]
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -50,6 +53,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 
 [[package]]
+<<<<<<< HEAD
 name = "backtrace"
 version = "0.3.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -65,6 +69,8 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
 name = "bitflags"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -145,17 +151,23 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "gimli"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
 
 [[package]]
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
 name = "gzip"
 version = "0.1.0"
 dependencies = [
  "atty",
+<<<<<<< HEAD
  "backtrace",
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
  "byteorder",
  "chrono",
  "crc",
@@ -227,6 +239,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
+<<<<<<< HEAD
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -242,6 +255,8 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -251,6 +266,7 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "object"
 version = "0.36.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -260,6 +276,8 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
 name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -293,12 +311,15 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "rustc-demangle"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
 
 [[package]]
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

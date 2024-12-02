@@ -8,5 +8,9 @@ filetime = "0.2.25"
 atty = "0.2.14"
 crc = "3.2.1"
 byteorder = "1.4.3"
+<<<<<<< HEAD
 chrono = "0.4.38"
 backtrace = "0.3"
+=======
+chrono = "0.4.38"
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb

@@ -5,7 +5,6 @@ use crate::trees::Trees;
 use crate::{OK, ERROR, STORED, WSIZE, INBUFSIZ};
 use std::io::{stdout, Read, Write, Cursor};
 
-
 #[derive(Debug)]
 #[derive(Clone)]
 struct Huft {

@@ -172,7 +172,10 @@ struct GzipState {
     ascii: bool,
     to_stdout: bool,
     decompress: bool,
+<<<<<<< HEAD
     test_huft: bool,
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
     force: i32,
     keep: bool,
     no_name: Option<bool>, // None represents -1 in C code
@@ -245,7 +248,10 @@ impl GzipState {
             decompress: false,
             force: 0,
             keep: false,
+<<<<<<< HEAD
             test_huft: false,
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
             no_name: None, // None represents -1 (undefined) in the C code
             no_time: None, // None represents -1 (undefined) in the C code
             recursive: false,
@@ -373,10 +379,13 @@ impl GzipState {
                     }
                     "c" => self.to_stdout = true,
                     "d" => self.decompress = true,
+<<<<<<< HEAD
                     "H" => {
                         self.decompress = true;
                         self.test_huft = true;
                     }
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
                     "f" => self.force += 1,
                     "h" | "H" => {
                         self.help();
@@ -923,7 +932,11 @@ impl GzipState {
 
             magic[8] = self.get_byte(input)?;
             magic[9] = self.get_byte(input)?;
+<<<<<<< HEAD
             // eprintln!("{:?}, magic", &magic[0..10]);
+=======
+            eprintln!("{:?}, magic", &magic[0..10]);
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
             if flags & HEADER_CRC != 0 {
 //                 eprintln!("{:?}, magic", &magic[0..10]);
                 magic[2] = DEFLATED as u8;

@@ -5,12 +5,15 @@ use crate::{OK, ERROR, GzipState, STORED, DEFLATED, GZIP_MAGIC, ORIG_NAME, OS_CO
 use crate::deflate::Deflate;
 use crate::inflate::Inflate;
 use crate::trees::Trees;
+<<<<<<< HEAD
 use std::backtrace::Backtrace;
 
 fn example_function() {
     let bt = Backtrace::capture(); 
     println!("Backtrace:\n{:?}", bt);
 }
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
 
 // Macros for getting two-byte and four-byte header values
 /// 提取两字节无符号整数
@@ -69,9 +72,12 @@ pub fn unzip (state: &mut GzipState) -> io::Result<()> {
     // Decompress
     if state.method == DEFLATED {
         let res = inflate.inflate(state);
+<<<<<<< HEAD
         if state.test_huft{
             return Ok(());
         }
+=======
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
 
         if res == 3 {
             state.gzip_error("memory exhausted");
@@ -118,11 +124,17 @@ pub fn unzip (state: &mut GzipState) -> io::Result<()> {
         orig_len = LG(&buf[12..]);
     }
 
+<<<<<<< HEAD
     example_function();
 
     // Validate decompression
     if  u32::from(orig_crc) != state.updcrc(Some(&state.outbuf.clone()), 0) {
         let backtrace = Backtrace::capture(); println!("{:?}", backtrace);
+=======
+
+    // Validate decompression
+    if  u32::from(orig_crc) != state.updcrc(Some(&state.outbuf.clone()), 0) {
+>>>>>>> 9aba71e9d6f1febe08e4ebfbc7de52af9811e8cb
         eprintln!(
             "\n{}: {}: invalid compressed data--crc error",
             state.program_name, state.ifname

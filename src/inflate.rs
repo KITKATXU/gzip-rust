@@ -255,6 +255,7 @@ impl Inflate {
         if state.inptr < state.insize {
             let byte = state.inbuf[state.inptr];
             state.inptr += 1;
+            // println!("gb:{:?} {:?}", state.inptr,state.inbuf[state.inptr]);
             Ok(byte)
         } else {
             self.wp = w; // This part needs clarification based on your code
@@ -304,9 +305,11 @@ impl Inflate {
         let mut v = [0u32; N_MAX as usize];
         let mut u: Vec<Box<[Huft]>> = Vec::new();
         let mut q: Box<[Huft]> = Box::new([Huft { v: HuftValue::N(0), e: 0, b: 0 }]);
+        let mut hpos = [0usize; BMAX as usize + 1];
 
         let mut a;
         let mut f: u32;
+        let mut k: i32;
         let mut g: u32;
         let mut h: i32 = -1;
         let mut l = *m;
@@ -342,10 +345,27 @@ impl Inflate {
         }
 
         // Find minimum and maximum length
-        let mut k = c.iter().position(|&x| x != 0).unwrap_or(0) as i32;
+        // let mut k = c.iter().position(|&x| x != 0).unwrap_or(0) as i32;
+        
+        // Find minimum code length (k), starting from index 1
+        k = c.iter()
+        .enumerate()
+        .find(|&(idx, &x)| idx >= 1 && x != 0)
+        .map(|(idx, _)| idx as i32)
+        .unwrap_or(0);
+
         g = (1..=BMAX).rev().find(|&x| c[x as usize] != 0).unwrap_or(0) as u32 ;
+
+    
+        // Find maximum code length (g), starting from BMAX and going backwards
+        // g = (1..=BMAX)
+        // .rev()
+        // .find(|&x| c[x as usize] != 0)
+        // .map(|x| x as u32)
+        // .unwrap_or(0);
         l = l.clamp(k, g as i32);
         *m = l;
+        w = -l;
 
         // Debugging: Min and max lengths
         // println!("Minimum length k = {}, Maximum length g = {}, Clamped l = {}", k, g, l);
@@ -406,9 +426,12 @@ impl Inflate {
 
 
             while a > 0 {
+                a -= 1;
 //                 println!("--- k: {}, a: {}, w: {}， l: {}", k, a, w, l);  // Debug: output current k and a
+                
                 while k > w + l {
                     h += 1;
+                    
                     w += l;  // Previous table always l bits
 
                     // Compute minimum size table less than or equal to l bits
@@ -420,17 +443,23 @@ impl Inflate {
                     if f > a + 1 {
                         f -= a + 1;  // Deduct codes from patterns left
                         let mut xp_index = k as usize;  // Start at index k
-                        let mut j = 0;
+                        // let mut j = 0;
 
                         if j < z {
-                            while j < z {
+
+                            loop {
+                                j += 1; // 相当于 C 中的 ++j
+                                if j >= z as u32 {
+                                    break;
+                                }
                                 f <<= 1;
+                                xp_index += 1;
                                 if f <= c[xp_index] {
                                     break;  // Enough codes to use up j bits
                                 }
                                 f -= c[xp_index];
-                                j += 1;
-                                xp_index += 1;  // Increment the index to move to the next element
+                                // j += 1;
+                                // xp_index += 1;  // Increment the index to move to the next element
                             }
                         }
                     }
@@ -461,6 +490,7 @@ impl Inflate {
                     u_len = u.len() as i32;
                     // Connect to last table, if there is one
                     if h > 0 {
+
                         x[h as usize] = i;  // Save pattern for backing up
                         // r = Huft {
                         //     b: l as u8,         // Bits to dump before this table
@@ -470,17 +500,50 @@ impl Inflate {
                         r.b = l as u8;
                         r.e = (16 + j) as u8;
                         r.v = HuftValue::T(q.clone());
-                        let j = (i >> (w - l)) as usize;
-                        u[h as usize - 1][j] = r.clone();  // Connect to last table
+                        j = (i >> (w - l)) ;
+                        // u[h as usize - 1][j as usize] = r.clone();  // Connect to last table
+
                         which_q = 2;
                         which_len = h as usize - 1;
-                        sub = j;
+                        hpos[which_len] = j as usize;
+
+
+                        // 指针 tmp 指向 u[0]
+                        let mut tmp = &mut u[0][..]; // mutable slice of [Huft]
+
+                        // 遍历每个深度
+                        for depth in 0..=which_len {
+
+                            let pos = hpos[depth];
+
+                            if depth == which_len {
+                                // if let HuftValue::T(ref mut cloned_q) = tmp {
+                                    // cloned_q 现在是 Box<[Huft]> 类型，可以修改其中的元素
+                                    tmp[pos] = r.clone(); 
+                                    // println!("q = 2: Subtable[{}] = {:?}", j, r);  // Debug: output subtable index and assignment
+                                    break;
+                                    // }
+                            }
+                            
+                            
+                            if let HuftValue::T(ref mut cloned_q) = tmp[pos].v {
+                                tmp = cloned_q.as_mut();
+                            }
+                            // println!("tmp={:?}",tmp);
+                            // println!("pos={:?} depth={:?}",pos,depth);
+                          
+
+                        }
+                        
+                        // println!("hpos={:?} which_len={:?} j={:?}",hpos,which_len,j);
+                        sub = j as usize;
                         // println!("    Connected to previous table, u[{}][{}] updated, r = {:?}", h - 1, j, r);  // Debug
                     }
                 }
 
                 // let mut r = Huft::default();
                 r.b = (k - w) as u8;
+                // println!("v={:?}",v);
 
                 if p < n {
                     if v[p] < s as u32 {
@@ -491,6 +554,9 @@ impl Inflate {
                         r.e = e[v[p] as usize - s] as u8;
                         r.v = HuftValue::N(d[v[p] as usize - s]);
                         p = p + 1;
+                        
+                        // println!("p={:?}, vp={:?}, s={:?} idx={:?}",p,v[p], s, v[p-1] as usize - s);
+                        // println!("    r: {:?}, e: {}, b: {}, v: {:?}", r, r.e, r.b, r.v);  // Debug: output r
                     }
                 } else {
                     r.e = 99;
@@ -500,6 +566,7 @@ impl Inflate {
                 // let mut f = 1 << (k - w);
                 // let mut i = i >> w;
 //                 println!("    f: {}, i (after shift): {}", f, i);  // Debug: output f and shifted i
+                
                 j = i >> w;  // 初始化 j
                 f = 1 << (k - w);
 
@@ -509,12 +576,43 @@ impl Inflate {
                         // println!("q = 1: Subtable[{}] = {:?}", j, r);  // Debug: output subtable index and assignment
                     }
                     if which_q == 2{
-                        if let HuftValue::T(ref mut cloned_q) = u[which_len][sub].v {
-                            // cloned_q 现在是 Box<[Huft]> 类型，可以修改其中的元素
-                            cloned_q[j as usize] = r.clone(); 
-                            // println!("q = 2: Subtable[{}] = {:?}", j, r);  // Debug: output subtable index and assignment
+
+                        // 指针 tmp 指向 u[0]
+                        let mut tmp = &mut u[0][..]; // mutable slice of [Huft]
+
+                        // 遍历每个深度
+                        for depth in 0..=which_len {
+                            
+                            let pos = hpos[depth];
+                            if let HuftValue::T(ref mut cloned_q) = tmp[pos].v {
+                                tmp = cloned_q.as_mut();
+                            }
+                            // println!("tmp={:?}",tmp);
+                            // println!("pos={:?} depth={:?}",pos,depth);
+                            
+                            if depth == which_len {
+                                // if let HuftValue::T(ref mut cloned_q) = tmp {
+                                    // cloned_q 现在是 Box<[Huft]> 类型，可以修改其中的元素
+                                    tmp[j as usize] = r.clone(); 
+                                    // println!("q = 2: Subtable[{}] = {:?}", j, r);  // Debug: output subtable index and assignment
+                                // }
+                            }
+                            // println!("aft_tmp={:?}",tmp);
                         }
+
+                        // if let HuftValue::T(ref mut cloned_q) = u[depth][hpos[depth]].v {
+                        //     // cloned_q 现在是 Box<[Huft]> 类型，可以修改其中的元素
+                        //     cloned_q[j as usize] = r.clone(); 
+                        //     // println!("q = 2: Subtable[{}] = {:?}", j, r);  // Debug: output subtable index and assignment
+                        // }
+                        // }
                     }
+                    //     if let HuftValue::T(ref mut cloned_q) = u[which_len][sub].v {
+                    //         // cloned_q 现在是 Box<[Huft]> 类型，可以修改其中的元素
+                    //         cloned_q[j as usize] = r.clone(); 
+                    //         // println!("q = 2: Subtable[{}] = {:?}", j, r);  // Debug: output subtable index and assignment
+                    //     }
+                    // }
                     // q[j] = r.clone();
                     // println!("        Subtable[{}] = {:?}", j,r);  // Debug: output subtable index and assignment
                     j += f;    // 更新 j
@@ -546,7 +644,7 @@ impl Inflate {
                     // println!("    Backing up: h = {}, w = {}", h, w);  // Debug: output h and w during backup
                 }
 
-                a -= 1;
+                
             }
         }
 
@@ -867,17 +965,24 @@ impl Inflate {
         let mut b = self.bb;                 // Bit buffer
         let mut k = self.bk;                 // Number of bits in the bit buffer
         let mut w = self.wp as u32;          // Current window position
+        // println!("ib={:?}",state.inbuf);
 
         // Read table lengths
         self.need_bits(state, &mut k, &mut b, 5, w as usize);
         let nl = 257 + (b & 0x1f); // Number of literal/length codes
+        // println!("k={:?}, b={:?}",k,b);
         self.dump_bits(&mut k, &mut b, 5);
+        // println!("k={:?}, b={:?}",k,b);
         self.need_bits(state, &mut k, &mut b, 5, w as usize);
+        // println!("k={:?}, b={:?}",k,b);
         let nd = 1 + (b & 0x1f);   // Number of distance codes
         self.dump_bits(&mut k, &mut b, 5);
+        // println!("k={:?}, b={:?}",k,b);
         self.need_bits(state, &mut k, &mut b, 4, w as usize);
+        // println!("k={:?}, b={:?}",k,b);
         let nb = 4 + (b & 0xf);    // Number of bit length codes
         self.dump_bits(&mut k, &mut b, 4);
+        // println!("k={:?}, b={:?}",k,b);
 
         if nl > 286 || nd > 30 {
             return 1; // Invalid code lengths
@@ -895,6 +1000,7 @@ impl Inflate {
         for j in nb..19 {
             bit_lengths[border[j as usize] as usize] = 0;
         }
+        // println!("{:?}",bit_lengths );
 
         // Build the Huffman table for bit-length codes
         let mut result = self.huft_build(&bit_lengths, 19, 19, &[], &[], &mut tl, &mut bl);
@@ -910,6 +1016,16 @@ impl Inflate {
         if tl.is_none() {
             return 2; // Error in tree decoding
         }
+
+        // Debugging: Final result table
+        // println!("huft_build for literal/length table:");
+        // match tl {
+        //     Some(ref tl_box) => print_huft(tl_box, 0),
+        //     None => println!("tl is None"),
+        // }
+        
+        // print_huft(&tl, 0);
+        // print!("\n");
 
         // Decode literal/length and distance code lengths
         let n = nl + nd;
@@ -1000,7 +1116,7 @@ impl Inflate {
 
         // Build literal/length and distance Huffman tables
         bl = self.lbits;
-        result = self.huft_build(&literal_lengths, nl as usize, 257, &cpdist, &cpdext, &mut tl, &mut bl);
+        result = self.huft_build(&literal_lengths, nl as usize, 257, &cplens, &cplext, &mut tl, &mut bl);
         if result != 0 {
             if result == 1 {
                 if let Some(ref tl) = tl {
@@ -1149,7 +1265,6 @@ impl Inflate {
             state.inptr -= 1; // Assume `inptr` is a global variable pointing to the input buffer
         }
 
-        // Flush the output window
         self.flush_output(state, self.wp); // Assume `flush_output` is a function that writes decompressed data to the output
 
         // Return success status

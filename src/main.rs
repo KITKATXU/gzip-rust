@@ -1139,10 +1139,13 @@ impl GzipState {
             self.crc16_digest = 0xffffffff;
         } else {
             self.crc16_digest = self.crc16_digest; // 使用当前的 crc16_digest
+            // println!("crc={:?}",self.crc16_digest);
             let bytes = buf.unwrap();
+            // println!("bytes={:?}", &bytes[..10]);
             let mut i = 0;
             while i < len {
                 self.crc16_digest = CRC_32_TAB[((self.crc16_digest ^ bytes[i] as u32) & 0xff) as usize] ^ (self.crc16_digest >> 8);
+                // println!("crc={:?}",self.crc16_digest);
                 i += 1;
             }
         }
@@ -1594,6 +1597,71 @@ impl GzipState {
         self.ofd.as_mut().unwrap().write_all(&bytes)?;
         self.outcnt += 4;
 //         self.crc16_digest = self.updcrc(Some(&bytes), bytes.len());
+        Ok(())
+    }
+
+    fn read_error() -> io::Error {
+        io::Error::new(io::ErrorKind::Other, "Read error occurred.")
+    }
+
+    fn fill_inbuf(&mut self, eof_ok: bool) -> io::Result<Option<u8>> {
+        // Reset the input size
+        self.insize = 0;
+
+        // Read as much as possible
+        loop {
+            if self.insize >= INBUFSIZ {
+                break;
+            }
+
+            // Attempt to read into the buffer starting at `insize`
+            match &mut self.ifd {
+                Some(ifd) => {
+                    match ifd.read(&mut self.inbuf[self.insize..INBUFSIZ]) {
+                        Ok(0) => break, // EOF reached
+                        Ok(len) => self.insize += len,
+                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue, // Retry on interrupt
+                        Err(e) => return Err(e), // Propagate other I/O errors
+                    }
+                },
+                None => {
+                    // Handle the None case, perhaps returning an error
+                    return Err(Self::read_error());
+                },
+            }
+        }
+
+        if self.insize == 0 {
+            if eof_ok {
+                return Ok(None); // EOF is acceptable
+            }
+            self.flush_window();
+            // In C, errno is set to 0 and read_error() is called.
+            // In Rust, we propagate an error instead.
+            return Err(Self::read_error());
+        }
+
+        self.bytes_in += self.insize as i64;
+        self.inptr = 1; // Set the read pointer to 1, assuming 0 is processed elsewhere
+        Ok(Some(self.inbuf[0]))
+    }
+
+    pub fn flush_window(&mut self) -> std::io::Result<()> {
+        // println!("flush: outcnt={:?}",state.outcnt);
+        if self.outcnt == 0 {
+            return Ok(());
+        }
+        // println!("flush: outcnt={:?}",state.outcnt);
+
+        self.updcrc(Some(&self.window.clone()), self.outcnt);
+
+        if !self.test {
+            self.ofd.as_mut().expect("REASON").write_all(&self.window[0..self.outcnt])?;
+//             state.write_buf(&mut state.ofd, &state.window[0..state.outcnt], state.outcnt);
+        }
+
+        self.bytes_out += self.outcnt as i64;
+        self.outcnt = 0;
         Ok(())
     }
 }

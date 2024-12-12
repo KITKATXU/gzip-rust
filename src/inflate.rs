@@ -4,6 +4,8 @@ use crate::GzipState;
 use crate::trees::Trees;
 use crate::{OK, ERROR, STORED, WSIZE, INBUFSIZ};
 use std::io::{stdout, Read, Write, Cursor};
+use std::cmp::min;
+use std::cmp::max;
 
 #[derive(Debug)]
 #[derive(Clone)]
@@ -139,11 +141,11 @@ const N_MAX: i32 = 288;    // maximum number of codes in any set
 pub struct Inflate {
     bb: u32,
     bk: u32,
-    wp: usize,
+    // wp: usize,
     lbits: i32,
     dbits: i32,
     hufts: u32,
-    slide: [u8; 2 * WSIZE],
+    // slide: [u8; 2 * WSIZE],
 }
 
 impl Inflate {
@@ -151,11 +153,11 @@ impl Inflate {
         Self {
             bb: 0,
             bk: 0,
-            wp: 0,
+            // wp: 0,
             lbits: 9,
             dbits: 6,
             hufts: 0,
-            slide: [0; 2 * WSIZE],
+            // slide: [0; 2 * WSIZE],
         }
     }
 
@@ -203,9 +205,11 @@ impl Inflate {
     }
 
     pub fn flush_window(&mut self, state: &mut GzipState) -> std::io::Result<()> {
+        // println!("flush: outcnt={:?}",state.outcnt);
         if state.outcnt == 0 {
             return Ok(());
         }
+        // println!("flush: outcnt={:?}",state.outcnt);
 
         state.updcrc(Some(&state.window.clone()), state.outcnt);
 
@@ -222,7 +226,7 @@ impl Inflate {
     // Function to flush output (equivalent to macro flush_output in C)
     pub fn flush_output(&mut self, state: &mut GzipState, w: usize) {
         unsafe {
-            self.wp = w;
+            state.outcnt = w;
         }
         self.flush_window(state);
     }
@@ -258,10 +262,14 @@ impl Inflate {
             // println!("gb:{:?} {:?}", state.inptr,state.inbuf[state.inptr]);
             Ok(byte)
         } else {
-            self.wp = w; // This part needs clarification based on your code
+            state.outcnt = w; // This part needs clarification based on your code
 //             let mut input = Cursor::new(vec![0; 1]);
 //             self.fill_inbuf(&mut input, true, state)?;
-            Ok(0) // Placeholder, adjust logic as per the context
+                match state.fill_inbuf(false)? {
+                    Some(byte) => Ok(byte as u8),
+                    None => Ok(0), // EOF represented as -1
+                }
+                // Placeholder, adjust logic as per the context
         }
     }
 
@@ -679,7 +687,9 @@ impl Inflate {
     ) -> i32 {
         let mut b = self.bb; // Bit buffer
         let mut k = self.bk; // Number of bits in bit buffer
-        let mut w = self.wp; // Current window position
+        let mut w = state.outcnt; // Current window position
+        let mut e = 0;
+        let mut d;
 
         let ml = mask_bits[*bl as usize]; // Mask for `bl` bits
         let md = mask_bits[*bd as usize]; // Mask for `bd` bits
@@ -687,34 +697,56 @@ impl Inflate {
         loop {
             // Get a literal/length code
             self.need_bits(state, &mut k, &mut b, *bl as u32, w);
-            let index = (b & ml) as usize;
+            // let index = (b & ml) as usize;
+            // println!("b={:?},ml={:?},b&ml={:?}",b, ml, index);
+            // // println!("tl={:?}",tl);
 
-            // Traverse the literal/length table
+            // // Traverse the literal/length table      
+            // 计算初始的t
             let mut t = match tl {
                 Some(t) => &**t,
                 None => return 2,
             };
-            while let HuftValue::T(ref table) = t.v {
-                t = &table[index];
-            }
+            if let HuftValue::T(ref table) = t.v {
+                        t = &table[(b & ml) as usize];
+                    } else {
+                        return 2; // Invalid structure
+                    }
+            // t = &t[(b & ml) as usize];
+            e = t.e;
 
-            let mut e = t.e;
-            while e > 16 {
-                if e == 99 {
-                    return 1; // Invalid code
+            if e > 16 {
+                loop {
+
+
+                    // 检查e是否等于99
+                    if e == 99 {
+                        return 1;
+                    }
+
+                    // 调用DUMPBITS函数
+                    self.dump_bits(&mut k, &mut b, t.b as u32);
+
+                    // 减去16
+                    e -= 16;
+
+                    // 调用NEEDBITS函数
+                    self.need_bits(state, &mut k, &mut b, e as u32, w);
+
+                    // 更新t和e
+
+                    t = match &t.v {
+                        HuftValue::T(base) => &base[(b & mask_bits[e as usize]) as usize],
+                        _ => panic!("预期 HuftValue::T 变体"),
+                    };
+                    
+                    e = t.e;
+
+                    if e <= 16 {
+                        // println!("dbg:e={:?}",e);
+                        break;
+                    }
                 }
-                self.dump_bits(&mut k, &mut b, t.b as u32);
-                e -= 16;
-
-                self.need_bits(state, &mut k, &mut b, e as u32, w);
-                let index = (b & mask_bits[e as usize]) as usize;
-
-                if let HuftValue::T(ref table) = t.v {
-                    t = &table[index];
-                } else {
-                    return 2; // Invalid structure
-                }
-                e = t.e;
             }
 
             self.dump_bits(&mut k, &mut b, t.b as u32);
@@ -725,17 +757,21 @@ impl Inflate {
                     HuftValue::N(n) => n as usize,
                     _ => panic!("Expected HuftValue::N, but found HuftValue::T"),
                 };
-                self.slide[w] = n as u8;
+                state.window[w] = n as u8;
+                // println!("slide[w]={:?}",state.window[w]);
                 w += 1;
                 if w == WSIZE {
+                    // println!("slide={:?}",self.slide);
                     self.flush_output(state, w);
                     w = 0;
                 }
             } else {
                 // End of block or length
                 if e == 15 {
+                    // println!("found!");
                     break; // End of block
                 }
+                // println!("in e={:?}",e);
 
                 // Get length of block to copy
                 self.need_bits(state, &mut k, &mut b, e as u32, w);
@@ -743,72 +779,122 @@ impl Inflate {
                     HuftValue::N(n) => n as usize + (b & mask_bits[e as usize]) as usize,
                     _ => panic!("Expected HuftValue::N, but found HuftValue::T"),
                 };
+                // println!("n={:?}",n);
                 self.dump_bits(&mut k, &mut b, e as u32);
 
                 // Get distance of block to copy
                 self.need_bits(state, &mut k, &mut b, *bd as u32, w);
-                let index = (b & md) as usize;
 
-                // Traverse the distance table
+                // let mut e;
+                // 计算初始的t
                 let mut t = match td {
                     Some(t) => &**t,
                     None => return 2,
                 };
-                while let HuftValue::T(ref table) = t.v {
-                    t = &table[index];
-                }
+                if let HuftValue::T(ref table) = t.v {
+                            t = &table[(b & md) as usize];
+                        } else {
+                            return 2; // Invalid structure
+                        }
+                // t = &t[(b & ml) as usize];
+                e = t.e;
+                // println!("in1 e={:?}",e);
+                if e>16{
+                    loop {
+                        // 打印调试信息
+                        // match &t.v {
+                        //     HuftValue::N(n) => println!(
+                        //         "tl + ((unsigned)b & ml))->e={} tl + ((unsigned)b & ml))->b={} tl + ((unsigned)b & ml))->n={}",
+                        //         t.e, t.b, n
+                        //     ),
+                        //     HuftValue::T(_) => println!(
+                        //         "tl + ((unsigned)b & ml))->e={} tl + ((unsigned)b & ml))->b={} tl + ((unsigned)b & ml))->n=0",
+                        //         t.e, t.b
+                        //     ),
+                        // }
 
-                let mut e = t.e;
-                while e > 16 {
-                    if e == 99 {
-                        return 1; // Invalid code
+                        // 检查e是否等于99
+                        if e == 99 {
+                            return 1;
+                        }
+
+                        // 调用DUMPBITS函数
+                        self.dump_bits(&mut k, &mut b, t.b as u32);
+
+                        // 减去16
+                        e -= 16;
+
+                        // 调用NEEDBITS函数
+                        self.need_bits(state, &mut k, &mut b, e as u32, w);
+
+                        // 更新t和e
+                        t = match &t.v {
+                            HuftValue::T(base) => &base[(b & mask_bits[e as usize]) as usize],
+                            _ => panic!("预期 HuftValue::T 变体"),
+                        };
+                        
+                        e = t.e;
+
+                        // 检查是否需要继续循环
+                        if e <= 16 {
+                            break;
+                        }
                     }
-                    self.dump_bits(&mut k, &mut b, t.b as u32);
-                    e -= 16;
-
-                    self.need_bits(state, &mut k, &mut b, e as u32, w);
-                    let index = (b & mask_bits[e as usize]) as usize;
-
-                    if let HuftValue::T(ref table) = t.v {
-                        t = &table[index];
-                    } else {
-                        return 2; // Invalid structure
-                    }
-                    e = t.e;
                 }
 
                 self.dump_bits(&mut k, &mut b, t.b as u32);
 
                 self.need_bits(state, &mut k, &mut b, e as u32, w);
-                let mut d = match t.v {
-                    HuftValue::N(n) => w as isize - n as isize - (b & mask_bits[e as usize]) as isize,
+                d = match t.v {
+                    HuftValue::N(n) => w as isize  - n as isize  - (b & mask_bits[e as usize]) as isize ,
                     _ => panic!("Expected HuftValue::N, but found HuftValue::T"),
                 };
+                // println!("w={:?} b={:?} msk={:?} e={:?} d={:?} n={:?}",w, b, mask_bits[e as usize], e, d, n);
+                
                 self.dump_bits(&mut k, &mut b, e as u32);
 
+                // println!("w={:?} b={:?} msk={:?} e={:?} d={:?} n={:?}",w, b, mask_bits[e as usize], e, d, n);
                 // Copy block
                 while n > 0 {
-                    let e = (if d >= 0 {
-                        WSIZE - d as usize
-                    } else {
-                        w - d as usize
-                    })
-                    .min(n);
+                    // let e = (if d >= 0 {
+                    //     WSIZE - d as usize
+                    // } else {
+                    //     w - d as usize
+                    // })
+                    // .min(n);
 
-                    if d >= 0 && d + e as isize <= w as isize {
-                        self.slide.copy_within(d as usize..d as usize + e, w);
+                    // Step 1: Perform bitwise AND assignment on `d`
+                    d = d & (WSIZE - 1) as isize;
+
+                    // Step 2: Assign to `e` the result of `WSIZE - min(d, w)`
+                    let mut e = (WSIZE - (max(d, w as isize)) as usize ) ;
+
+                    // Step 3: Assign to `e` the minimum of `e` and `n`
+                    e = min(e, n);
+
+                    // Step 4: Subtract `e` from `n`
+                    n -= e as usize;
+                    // println!("n={:?} e={:?}",n ,e);
+                    if e <= if d < w as isize { (w as isize - d) as usize } else { (d - w as isize) as usize} {
+                        // Print debug information
+                        // println!("dbg: n={:?} w={} d={} e={}", n, w, d, e);
+
+                    // if d >= 0 && d + e as isize <= w as isize {
+                        state.window.copy_within((d as usize)..(d as usize) + e, w);
                         w += e;
                         d += e as isize;
                     } else {
-                        for _ in 0..e {
-                            self.slide[w] = self.slide[d as usize];
+                    for _ in 0..e {
+                            // println!("w={:?} d={:?} e={:?}",w,d, e);
+                            state.window[w] = state.window[d as usize];
                             w += 1;
                             d += 1;
-                        }
                     }
-                    n -= e;
+                    }
+                    // n -= e;
 
                     if w == WSIZE {
+                        // println!("flushed!");
                         self.flush_output(state, w);
                         w = 0;
                     }
@@ -817,7 +903,7 @@ impl Inflate {
         }
 
         // Restore globals
-        self.wp = w;
+        state.outcnt = w;
         self.bb = b;
         self.bk = k;
 
@@ -834,7 +920,7 @@ impl Inflate {
         // make local copies of globals
         b = self.bb;  // initialize bit buffer
         k = self.bk;  // number of bits in bit buffer
-        w = self.wp;  // initialize window position
+        w = state.outcnt;  // initialize window position
 
         // go to byte boundary
         n = k & 7;
@@ -854,7 +940,7 @@ impl Inflate {
         // read and output the compressed data
         while n > 0 {
             self.need_bits(state, &mut k, &mut b, 8, w);
-            self.slide[w] = (b & 0xff) as u8;  // assuming slide is an array
+            state.window[w] = (b & 0xff) as u8;  // assuming slide is an array
             w += 1;
 
             if w == WSIZE {
@@ -866,7 +952,7 @@ impl Inflate {
         }
 
         // restore the globals from the locals
-        self.wp = w;  // restore global window pointer
+        state.outcnt = w;  // restore global window pointer
         self.bb = b;  // restore global bit buffer
         self.bk = k;
 
@@ -964,7 +1050,7 @@ impl Inflate {
         let mut bd: i32 = 5;                 // Lookup bits for `td`
         let mut b = self.bb;                 // Bit buffer
         let mut k = self.bk;                 // Number of bits in the bit buffer
-        let mut w = self.wp as u32;          // Current window position
+        let mut w = state.outcnt as u32;          // Current window position
         // println!("ib={:?}",state.inbuf);
 
         // Read table lengths
@@ -1201,7 +1287,7 @@ impl Inflate {
         // Initialize local variables
         b = self.bb;
         k = self.bk;
-        w = self.wp as u32;
+        w = state.outcnt as u32;
 
         // Read the last block bit
         self.need_bits(state, &mut k, &mut b, 1, w.try_into().unwrap());
@@ -1234,7 +1320,7 @@ impl Inflate {
         let mut h: u32; // Maximum number of `huft` structures allocated
 
         // Initialize the window and bit buffer
-        self.wp = 0; // Current window position
+        state.outcnt = 0; // Current window position
         self.bk = 0; // Number of bits in the bit buffer
         self.bb = 0; // Bit buffer
 
@@ -1265,7 +1351,7 @@ impl Inflate {
             state.inptr -= 1; // Assume `inptr` is a global variable pointing to the input buffer
         }
 
-        self.flush_output(state, self.wp); // Assume `flush_output` is a function that writes decompressed data to the output
+        self.flush_output(state, state.outcnt); // Assume `flush_output` is a function that writes decompressed data to the output
 
         // Return success status
         // println!("{}", format!("<{}> ", h)); // Assume `trace` is a debugging output function

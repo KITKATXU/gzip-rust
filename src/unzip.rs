@@ -102,9 +102,13 @@ pub fn unzip (state: &mut GzipState) -> io::Result<()> {
         // uncompressed input size modulo 2^32
         for n in 0..8 {
             buf[n] = inflate.get_byte(state)?; // may cause an error if EOF
+            // println!("buf{:?}:{:?}",n,buf[n]);
         }
+        
         orig_crc = LG(&buf);
+        // println!("crc={:?}",orig_crc);
         orig_len = LG(&buf[4..]);
+        // println!("len={:?}",orig_len);
     } else if ext_header>0 {
         // If extended header, check it
         // signature - 4bytes: 0x50 0x4b 0x07 0x08
@@ -113,16 +117,19 @@ pub fn unzip (state: &mut GzipState) -> io::Result<()> {
         // uncompressed size 4-bytes
         for n in 0..EXTHDR {
             buf[n] = inflate.get_byte(state)?; // may cause an error if EOF
+            println!("buf{:?}:{:?}",n,buf[n]);
         }
         orig_crc = LG(&buf[4..]);
         orig_len = LG(&buf[12..]);
     }
 
-    example_function();
+    // example_function();
 
     // Validate decompression
-    if  u32::from(orig_crc) != state.updcrc(Some(&state.outbuf.clone()), 0) {
-        let backtrace = Backtrace::capture(); println!("{:?}", backtrace);
+    let mut dp_crc = state.updcrc(Some(&state.outbuf.clone()), 0);
+    // println!("dp_crc={:?}\n",dp_crc);
+    if  u32::from(orig_crc) != dp_crc {
+        // let backtrace = Backtrace::capture(); println!("{:?}", backtrace);
         eprintln!(
             "\n{}: {}: invalid compressed data--crc error",
             state.program_name, state.ifname

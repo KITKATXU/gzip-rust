@@ -34,10 +34,14 @@ for test_file in tests/*; do
             passed_tests=$((passed_tests + 1))
         else
             echo "$test_file: Huffman tree test failed"
+            # echo "---- output_gzip_d.txt ----"
+            # cat output_gzip_d.txt
+            # echo "---- output_target_debug.txt ----"
+            # cat output_target_debug.txt
+            # echo "-----------------------------------"
         fi
 
-        # Clean up temporary files
-        rm output_gzip_d.txt output_target_debug.txt
+        
     fi
 done
 

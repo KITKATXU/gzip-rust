@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "Debug",
             "program": "${workspaceFolder}/target/debug/gzip",
-            "args": ["-H", "${workspaceFolder}/test.txt.gz"],
+            "args": ["-d", "${workspaceFolder}/test.txt.gz"],
             "cwd": "${workspaceFolder}",
             "stopOnEntry": false,
         }

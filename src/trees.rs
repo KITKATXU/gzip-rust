@@ -84,8 +84,8 @@ pub struct Trees<'a> {
     pub last_lit: i32,
     pub last_dist: i32,
     pub last_flags: i32,
-    pub flags: i32,
-    pub flag_bit: i32,
+    pub flags: u8,
+    pub flag_bit: u8,
     pub l_buf: Box<[usize; LIT_BUFSIZE]>,
     pub d_buf: Box<[usize; DIST_BUFSIZE]>,
     pub flag_buf: Box<[usize; LIT_BUFSIZE/8]>,
@@ -328,16 +328,25 @@ impl<'a> Trees<'a> {
     }
 
     pub fn ct_tally(&mut self, deflate: &mut Deflate, state: &mut GzipState, dist: usize, lc: usize) -> bool {
+        let mut dist = dist;
+        let mut lc = lc;
+        // println!("last_lit: {}", self.last_lit);
+        // println!("dist: {}", dist);
+        // println!("lc: {}", lc);
+        
         // Add the character or match length to the literal buffer
-        self.l_buf[self.last_lit as usize] = lc as u8 as usize;
-        self.last_lit += 1;
+        state.inbuf[self.last_lit as usize] = lc as u8 ;
+        // self.l_buf[self.last_lit as usize] = lc as usize ;
 
+        self.last_lit += 1;
+        
         if dist == 0 {
             // lc is the unmatched character (literal)
             self.dyn_ltree.borrow_mut()[lc].freq += 1;
+            // println!("literal: {} freq: {}", lc, self.dyn_ltree.borrow_mut()[lc].freq);
         } else {
             // lc is the match length - MIN_MATCH
-            let dist = dist - 1; // Adjust distance
+            dist = dist - 1; // Adjust distance
             assert!(
                 dist < MAX_DIST
                     && lc <= MAX_MATCH - MIN_MATCH
@@ -351,6 +360,10 @@ impl<'a> Trees<'a> {
             self.d_buf[self.last_dist as usize] = dist as u16 as usize;
             self.last_dist += 1;
             self.flags |= self.flag_bit;
+            // println!("dist: {}", dist);
+            // println!("lidx:{:?} dyn_ltree: {:?}", self.length_code[lc] as usize + LITERALS + 1, self.dyn_ltree.borrow_mut()[self.length_code[lc] as usize + LITERALS + 1].freq);
+            // println!("didx:{:?} dyn_dtree: {:?}", self.d_code(dist), self.dyn_dtree.borrow_mut()[self.d_code(dist)].freq);
+            
         }
 
         self.flag_bit <<= 1;
@@ -362,6 +375,7 @@ impl<'a> Trees<'a> {
             self.flags = 0;
             self.flag_bit = 1;
         }
+
 
         // Try to guess if it is profitable to stop the current block here
         if state.level > 2 && (self.last_lit & 0xfff) == 0 {
@@ -392,6 +406,7 @@ impl<'a> Trees<'a> {
             }
         }
 
+
         // Return true if the buffer is full
         self.last_lit == (LIT_BUFSIZE - 1) as i32 || self.last_dist == DIST_BUFSIZE as i32
     }
@@ -414,6 +429,7 @@ impl<'a> Trees<'a> {
         let mut opt_lenb: u64;
         let static_lenb: u64;
         let max_blindex: i32;
+        // println!("flush_block");
 
         // Save the flags for the last 8 items
         self.flag_buf[self.last_flags as usize] = self.flags as usize;
@@ -422,26 +438,39 @@ impl<'a> Trees<'a> {
         if self.file_type == None {
             self.set_file_type();
         }
-
+        // println!("flush_block: stored_len: {}", stored_len);
+        // Special handling for empty files
+        if stored_len == 0 && eof {
+            // Use stored block format for empty files
+            state.send_bits((STORED_BLOCK << 1) as u16 + (if eof { 1 } else { 0 }) as u16, 3);
+            self.compressed_len = 0;
+            self.file_method = STORED;
+            return 0; // Return compressed length (0 for empty file)
+        }
+        // println!("flush_block: stored_len: {}", stored_len);
+        
         // Construct the literal and distance trees
         self.build_tree(state, &mut self.l_desc.clone());
-        if state.verbose > 1 {
-            eprintln!(
-                "\nlit data: dyn {}, stat {}",
-                self.opt_len, self.static_len
-            );
-        }
+        // if state.verbose > 1 {
+        // if true {
+        //     eprintln!(
+        //         "\nlit data: dyn {}, stat {}",
+        //         self.opt_len, self.static_len
+        //     );
+        // }
 
         self.build_tree(state, &mut self.d_desc.clone());
-        if state.verbose > 1 {
-            eprintln!(
-                "\ndist data: dyn {}, stat {}",
-                self.opt_len, self.static_len
-            );
-        }
+        // if state.verbose > 1 {
+        // if true {
+        //     eprintln!(
+        //         "\ndist data: dyn {}, stat {}",
+        //         self.opt_len, self.static_len
+        //     );
+        // }
 
         // Build the bit length tree and get the index of the last bit length code to send
         max_blindex = self.build_bl_tree(state);
+        // println!("max_blindex: {}", max_blindex);
 
         // Determine the best encoding. Compute the block length in bytes
         opt_lenb = (self.opt_len + 3 + 7) >> 3;
@@ -668,6 +697,8 @@ impl<'a> Trees<'a> {
         let mut flag: u8 = 0;   // Current flags
         let mut code: usize;    // The code to send
         let mut extra: u8;      // Number of extra bits to send
+        // println!("last_lit:{:?}",self.last_lit);
+        // println!("comprd:_l:{:?}",self.compressed_len);
 
         // Check if there are any literals to process
         if self.last_lit != 0 {
@@ -678,7 +709,7 @@ impl<'a> Trees<'a> {
                     fx += 1;
                 }
 
-                lc = self.l_buf[lx] as i32;
+                lc = state.inbuf[lx] as i32;
                 lx += 1;
 
                 if (flag & 1) == 0 {
@@ -775,8 +806,8 @@ impl<'a> Trees<'a> {
         let tree = desc.dyn_tree.clone();
         let stree = desc.static_tree.as_ref();
         let elems = desc.elems;
-        let mut n: usize;
-        let mut m: usize;
+        let mut n: usize = 0;
+        let mut m: usize = 0;
         let mut max_code = -1; // Largest code with non-zero frequency
         let mut node = elems;  // Next internal node of the tree
 
@@ -784,6 +815,7 @@ impl<'a> Trees<'a> {
         // The sons of heap[n] are heap[2*n] and heap[2*n+1]. heap[0] is not used.
         self.heap_len = 0;
         self.heap_max = HEAP_SIZE;
+        // println!("elems: {}", elems);
 
         for n in 0..elems {
             if tree.borrow()[n].freq != 0 {
@@ -791,6 +823,8 @@ impl<'a> Trees<'a> {
                 self.heap[self.heap_len] = n as i32;
                 max_code = n as i32;
                 self.depth[n] = 0;
+                // println!("n: {}", n);
+                // println!("heap_len: {}", self.heap_len);
             } else {
                 tree.borrow_mut()[n].len = 0;
             }
@@ -801,10 +835,17 @@ impl<'a> Trees<'a> {
         // possible code. So to avoid special checks later on, we force at least
         // two codes of non-zero frequency.
         while self.heap_len < 2 {
-            max_code += 1;
-            let new_node = if max_code < 2 { max_code } else { 0 } as usize;
+            // max_code += 1;
+            let new_node = if max_code < 2 { 
+                max_code += 1;
+                max_code 
+            } else { 
+                0 
+            } as usize;
             self.heap_len += 1;
             self.heap[self.heap_len] = new_node as i32;
+            // println!("new_node: {}", new_node);
+            // println!("heap_len: {}", self.heap_len);
             tree.borrow_mut()[new_node].freq = 1;
             self.depth[new_node] = 0;
             self.opt_len = self.opt_len.wrapping_sub(1);
@@ -818,13 +859,20 @@ impl<'a> Trees<'a> {
         // The elements heap[heap_len/2+1 .. heap_len] are leaves of the tree,
         // establish sub-heaps of increasing lengths:
         for n in (1..=(self.heap_len / 2)).rev() {
+            // println!("n: {}", n);
             self.pq_down_heap(tree.borrow().deref(), n);
         }
 
         // Construct the Huffman tree by repeatedly combining the two least frequent nodes.
         loop {
+            // println!("n: {}", n);
             n = self.pq_remove(tree.borrow().deref()) as usize; // Node of least frequency
             m = self.heap[SMALLEST] as usize;  // Node of next least frequency
+
+            // println!("heap_len: {}", self.heap_len);
+            // println!("heap_max: {}", self.heap_max);
+            // println!("n:{}", n);
+            // println!("m:{}", m);
 
             self.heap_max -= 1;
             self.heap[self.heap_max] = n as i32; // Keep the nodes sorted by frequency
@@ -840,13 +888,22 @@ impl<'a> Trees<'a> {
 
             // Insert the new node into the heap
             self.heap[SMALLEST] = node as i32;
+            // println!("heap[SMALLEST]: {}", self.heap[SMALLEST]);
             self.pq_down_heap(tree.borrow_mut().deref_mut(), SMALLEST);
-
+            // println!("heap[SMALLEST]: {}", self.heap[SMALLEST]);
             node += 1;
+
+            
+
             if self.heap_len < 2 {
                 break;
             }
+
         }
+        // println!("heap_len: {}", self.heap_len);
+        // println!("heap_max: {}", self.heap_max);
+        // println!("n:{}", n);
+        // println!("m:{}", m);
 
         self.heap_max -= 1;
         self.heap[self.heap_max] = self.heap[SMALLEST];
@@ -863,9 +920,13 @@ impl<'a> Trees<'a> {
     fn pq_remove(&mut self, tree: &[CtData]) -> usize {
         // The smallest item is at the root of the heap (index 0 in zero-based indexing)
         let top = self.heap[SMALLEST]; // Remove the smallest item
+        // println!("top: {}", top);
+        // println!("heap_len: {}", self.heap_len);
+        // println!("heap_v: {}", self.heap[self.heap_len - 1]);
+        // println!("SMALLEST: {}", SMALLEST);
 
         // Move the last item to the root and reduce the heap size
-        self.heap[SMALLEST] = self.heap[self.heap_len - 1];
+        self.heap[SMALLEST] = self.heap[self.heap_len];
         self.heap_len -= 1;
 
         // Restore the heap property by moving down from the root
@@ -1009,20 +1070,26 @@ impl<'a> Trees<'a> {
     /// stopping when the heap property is re-established (each parent smaller than its two children).
     fn pq_down_heap(&mut self, tree: &[CtData], mut k: usize) {
         let heap_len = self.heap_len;
+        // println!("k: {}", k);
 
         let v = self.heap[k];
 
-        loop {
-            let mut j = 2 * k + 1; // Left child index in zero-based array
+        let mut j = k << 1; 
 
-            if j >= heap_len {
-                break;
-            }
+        while j <= heap_len {
+            // let mut j = 2 * k + 1; // Left child index in zero-based array
+
+            // if j >= heap_len {
+            //     break;
+            // }
+            // println!("j: {}", j);
 
             // If right child exists and is smaller than left child, use right child
-            if j + 1 < heap_len && self.smaller(tree, self.heap[j + 1] as usize, self.heap[j] as usize) {
+            if j < heap_len && self.smaller(tree, self.heap[j + 1] as usize, self.heap[j] as usize) {
                 j += 1; // Move to right child
             }
+            // println!("v: {} j: {}", v, j);
+            // println!("heap[j]: {}", self.heap[j]);
 
             // If parent node v is smaller than smallest child, stop
             if self.smaller(tree, v as usize, self.heap[j] as usize) {
@@ -1034,6 +1101,8 @@ impl<'a> Trees<'a> {
 
             // Move down to child's position
             k = j;
+
+            j <<= 1;
         }
 
         self.heap[k] = v;

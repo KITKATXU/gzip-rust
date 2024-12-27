@@ -11,3 +11,12 @@ byteorder = "1.4.3"
 chrono = "0.4.38"
 backtrace = "0.3"
 
+[dev-dependencies]
+tempfile = "3.2"
+
+[package.metadata.tarpaulin]
+engine = "llvm"
+out-type = ["Html", "Xml"]
+run-types = ["Tests", "Doctests"]
+target-dir = "target/coverage"
+

@@ -76,7 +76,8 @@ pub fn unzip (state: &mut GzipState) -> io::Result<()> {
         if res == 3 {
             state.gzip_error("memory exhausted");
         } else if res != 0 {
-            eprintln!("Debugging res: {}", res);
+            // eprintln!("Debugging res: {}", res);
+            eprintln!("");
             state.gzip_error("invalid compressed data--format violated");
         }
     } else if pkzip>0 && state.method == STORED {

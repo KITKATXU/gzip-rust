@@ -21,6 +21,9 @@ use std::time::{Duration, SystemTime};
 use std::{env, fs, io};
 use std::os::unix::fs::MetadataExt;
 
+#[cfg(test)]
+mod tests;
+
 // Constants (Assumed values for any not defined in the provided C code)
 const BITS: i32 = 16; // Assuming 16 bits
 const DEFLATED: i32 = 8;
@@ -30,7 +33,7 @@ const MAX_PATH_LEN: usize = 1024; // As defined in the C code
 const Z_SUFFIX: &str = ".gz";
 const MAX_SUFFIX: usize = 30; // Assuming maximum suffix length
 
-const VERSION: &str = "1.0"; // Assuming version 1.0, replace with actual version.
+const VERSION: &str = "1.10"; // Assuming version 1.0, replace with actual version.
 
 #[cfg(all(target_os = "windows", target_pointer_width = "32"))]
 const OS_CODE: u8 = 0x0b;
@@ -38,7 +41,6 @@ const OS_CODE: u8 = 0x0b;
 const OS_CODE: u8 = 0x07;
 #[cfg(all(not(all(target_os = "windows", target_pointer_width = "32")), not(target_os = "macos")))]
 const OS_CODE: u8 = 0x03;
-
 const CRC_32_TAB: [u32; 256] = [
   0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419,
   0x706af48f, 0xe963a535, 0x9e6495a3, 0x0edb8832, 0x79dcb8a4,
@@ -84,7 +86,7 @@ const CRC_32_TAB: [u32; 256] = [
   0xe5d5be0d, 0x7cdcefb7, 0x0bdbdf21, 0x86d3d2d4, 0xf1d4e242,
   0x68ddb3f8, 0x1fda836e, 0x81be16cd, 0xf6b9265b, 0x6fb077e1,
   0x18b74777, 0x88085ae6, 0xff0f6a70, 0x66063bca, 0x11010b5c,
-  0x8f659eff, 0xf862ae69, 0x616bffd3, 0x166ccf45, 0xa00ae278,
+  0x8f659eff, 0xfe62ae69, 0x616bffd3, 0x166ccf45, 0xa00ae278,
   0xd70dd2ee, 0x4e048354, 0x3903b3c2, 0xa7672661, 0xd06016f7,
   0x4969474d, 0x3e6e77db, 0xaed16a4a, 0xd9d65adc, 0x40df0b66,
   0x37d83bf0, 0xa9bcae53, 0xdebb9ec5, 0x47b2cf7f, 0x30b5ffe9,
@@ -95,10 +97,10 @@ const CRC_32_TAB: [u32; 256] = [
 
 
 const LICENSE_MSG: &[&str] = &[
-    "Copyright (C) 2007, 2010, 2011 Free Software Foundation, Inc.",
+    "Copyright (C) 2018 Free Software Foundation, Inc.",
     "Copyright (C) 1993 Jean-loup Gailly.",
     "This is free software.  You may redistribute copies of it under the terms of",
-    "the GNU General Public License <http://www.gnu.org/licenses/gpl.html>.",
+    "the GNU General Public License <https://www.gnu.org/licenses/gpl.html>.",
     "There is NO WARRANTY, to the extent permitted by law.",
 ];
 
@@ -137,7 +139,7 @@ const HELP_MSG: &[&str] = &[
     "Mandatory arguments to long options are mandatory for short options too.",
     "",
     // Assuming O_BINARY is false (platform-independent code)
-    "  -a, --ascii       ascii text; convert end-of-line using local conventions",
+    // "  -a, --ascii       ascii text; convert end-of-line using local conventions",
     "  -c, --stdout      write on standard output, keep original files unchanged",
     "  -d, --decompress  decompress",
     "  -f, --force       force overwrite of output file and compress links",
@@ -238,7 +240,9 @@ impl GzipState {
             .split(".").next().unwrap()
             .split("/").last().unwrap()
             .split("\\").last().unwrap().to_string();
-        GzipState {
+
+        // Create the initial state
+        let mut state = GzipState {
             presume_input_tty: false,
             ascii: false,
             to_stdout: false,
@@ -255,7 +259,7 @@ impl GzipState {
             do_lzw: false,
             test: false,
             _foreground: false,
-            program_name,
+            program_name: "gzip".to_string(),
             _env: None,
             args: vec![],
             z_suffix: Z_SUFFIX.to_string(),
@@ -296,7 +300,27 @@ impl GzipState {
             bi_buf: 0,
             bi_valid: 0,
             first_call: true,
+        };
+
+        // Handle GZIP environment variable
+        if let Ok(gzip_env) = env::var("GZIP") {
+            if !gzip_env.is_empty() {
+                // Check if the option is valid
+                if gzip_env.starts_with('-') && gzip_env.len() == 2 && 
+                   gzip_env.chars().nth(1).unwrap().is_ascii_digit() {
+                    // Valid compression level option
+                    eprintln!("gzip: warning: GZIP environment variable is deprecated; use an alias or script");
+                } else {
+                    // Invalid option
+                    eprintln!("{}: {}: option not valid in GZIP environment variable", 
+                             state.program_name, gzip_env);
+                    eprintln!("Try `gzip --help' for more information.");
+                    exit(ERROR);
+                }
+            }
         }
+
+        state
     }
 
     // Example method to set the 'work' function pointer based on the operation
@@ -359,7 +383,7 @@ impl GzipState {
         while let Some(arg) = arg_iter.next() {
             if arg.starts_with('-') && arg.len() > 1 {
                 match &arg[1..] {
-                    "a" => self.ascii = true,
+                    "a" | "--ascii" => self.ascii = true,
                     "b" => {
                         if let Some(bits_arg) = arg_iter.next() {
                             self.maxbits = bits_arg.parse().unwrap_or_else(|_| {
@@ -367,7 +391,7 @@ impl GzipState {
                                 self.try_help();
                             });
                         } else {
-                            eprintln!("{}: -b requires an operand", self.program_name);
+                            eprintln!("{}: option requires an argument -- 'b'", self.program_name);
                             self.try_help();
                         }
                     }
@@ -449,6 +473,12 @@ impl GzipState {
 
     // Entry point to start processing files or stdin
     fn run(&mut self) -> io::Result<()> {
+        // Add ASCII mode check at the start of run()
+        if self.ascii && !self.quiet {
+            eprintln!("gzip: option --ascii ignored on this system");
+            // self.do_exit(ERROR);
+        }
+
         // By default, save name and timestamp on compression but do not restore them on decompression.
         if self.no_time.is_none() {
             self.no_time = Some(self.decompress);
@@ -504,7 +534,12 @@ impl GzipState {
         let metadata = match fs::metadata(path) {
             Ok(meta) => meta,
             Err(err) => {
-                eprintln!("{}: {}", self.program_name, err);
+                let error_msg = match err.kind() {
+                    io::ErrorKind::NotFound => "No such file or directory",
+                    io::ErrorKind::PermissionDenied => "Permission denied",
+                    _ => "unknown error"
+                };
+                eprintln!("{}: {}: {}", self.program_name, iname, error_msg);
                 return Ok(());
             }
         };
@@ -654,6 +689,7 @@ impl GzipState {
                 Some(method) => method,
                 None => break,
             };
+            println!("method: {}", self.method);
             self.bytes_out = 0;
         }
 
@@ -1047,7 +1083,7 @@ impl GzipState {
         }
 
         if self.part_nb == 1 {
-            eprintln!("\n{}: {}: not in gzip format", self.program_name, self.ifname);
+            eprintln!("\n{}: {}: unexpected end of file", self.program_name, self.ifname);
             self.exit_code = ERROR;
             return Ok(None);
         } else {
@@ -1539,15 +1575,10 @@ impl GzipState {
     }
 
     // Function to write a single byte
-    fn put_byte(&mut self, mut byte: u8) -> io::Result<()> {
-        if self.to_stdout && String::from_utf8_lossy(&[byte]).as_bytes()[0] != byte {
-            self.ofd.as_mut().unwrap().write_all(String::from_utf8_lossy(&[byte]).as_bytes())?;
-            self.outcnt += 1;
-            return Ok(());
-        }
+    fn put_byte(&mut self, byte: u8) -> io::Result<()> {
+        // 直接写入原始字节,不进行任何编码转换
         self.ofd.as_mut().unwrap().write_all(&[byte])?;
         self.outcnt += 1;
-//         self.crc16_digest = self.updcrc(Some(&[byte]), 1);
         Ok(())
     }
 

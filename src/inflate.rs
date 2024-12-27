@@ -708,10 +708,14 @@ impl Inflate {
                 None => return 2,
             };
             if let HuftValue::T(ref table) = t.v {
-                        t = &table[(b & ml) as usize];
-                    } else {
-                        return 2; // Invalid structure
-                    }
+                // Add bounds check
+                if table.is_empty() || (b & ml) as usize >= table.len() {
+                    return 2; // Invalid table structure
+                }
+                t = &table[(b & ml) as usize];
+            } else {
+                return 2; // Invalid structure
+            }
             // t = &t[(b & ml) as usize];
             e = t.e;
 
@@ -792,10 +796,14 @@ impl Inflate {
                     None => return 2,
                 };
                 if let HuftValue::T(ref table) = t.v {
-                            t = &table[(b & md) as usize];
-                        } else {
-                            return 2; // Invalid structure
-                        }
+                    // Add bounds check
+                    if table.is_empty() || (b & md) as usize >= table.len() {
+                        return 2; // Invalid table structure
+                    }
+                    t = &table[(b & md) as usize];
+                } else {
+                    return 2; // Invalid structure
+                }
                 // t = &t[(b & ml) as usize];
                 e = t.e;
                 // println!("in1 e={:?}",e);
@@ -1128,6 +1136,10 @@ impl Inflate {
                 Some(table) => {
                     let mut t = &**table;
                     while let HuftValue::T(ref subtable) = t.v {
+                        // Add bounds check
+                        if subtable.is_empty() || index >= subtable.len() {
+                            return 2; // Invalid table structure
+                        }
                         t = &subtable[index];
                     }
                     t

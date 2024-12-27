@@ -10,7 +10,8 @@ const MIN_LOOKAHEAD: usize = 262; // Minimum lookahead for deflate
 pub(crate) const MIN_MATCH: usize = 3;
 const FAST: u16 = 0x04;
 const SLOW: u16 = 0x02;
-pub(crate) const MAX_DIST: usize = 16384;
+pub(crate) const MAX_DIST: usize = WSIZE-MIN_LOOKAHEAD;
+// pub(crate) const MAX_DIST: usize = 16384;
 pub(crate) const MAX_MATCH: usize = 258;
 const HASH_BITS: usize = 15;
 const HASH_MASK: u32 = (HASH_SIZE as u32) - 1;
@@ -139,8 +140,11 @@ impl Deflate {
     }
 
     fn update_hash(&self, h: u32, c: u8) -> u32 {
-        // Implements UPDATE_HASH macro from C code
-        (((h) << H_SHIFT) ^ (c as u32)) & HASH_MASK
+        // 先将 c 转换为 u32，然后再进行位运算
+        let c_u32 = u32::from(c);
+        // println!("h: {}", h);
+        // println!("c: {}", c);
+        ((h << H_SHIFT) ^ c_u32) & HASH_MASK
     }
 
     fn read_buf(state: &mut GzipState, buf: &mut [u8], size: usize) -> (usize, bool) {
@@ -232,6 +236,9 @@ impl Deflate {
             // Insert the string window[strstart .. strstart+2] into the dictionary
             // and set hash_head to the head of the hash chain
             hash_head = self.insert_string(self.strstart);
+            // println!("ins_h: {}", self.ins_h);
+            // println!("strstart: {}", self.strstart);
+            // println!("hash_head: {}", hash_head);
 
             // Find the longest match, discarding those <= prev_length
             // At this point, we always have match_length < MIN_MATCH
@@ -247,19 +254,25 @@ impl Deflate {
                     match_length = self.lookahead;
                 }
             }
+            // println!("strstart: {}", self.strstart);
+            // println!("hash_head: {}", hash_head);
+            // println!("dbg: match_length: {}", match_length);
             if match_length >= MIN_MATCH {
                 self.check_match(state, self.strstart, self.match_start, match_length);
+
+                // println!("match_length: {}", match_length);
 
                 flush = tree.ct_tally(self, state, self.strstart - self.match_start, match_length - MIN_MATCH);
 
                 self.lookahead -= match_length;
 
                 // Insert new strings in the hash table only if the match length is not too large
-                if match_length <= self.max_insert_length {
+                if match_length <= self.max_lazy_match as usize {
                     match_length -= 1; // String at strstart already in hash table
-                    while match_length != 0 {
+                    loop {
                         self.strstart += 1;
                         hash_head = self.insert_string(self.strstart);
+                        if match_length == 1 { match_length -= 1; break; }
                         match_length -= 1;
                     }
                     self.strstart += 1;
@@ -269,20 +282,21 @@ impl Deflate {
                     self.ins_h = self.window[self.strstart] as u32;
                     self.ins_h = self.update_hash(self.ins_h, self.window[self.strstart + 1]);
                     // If MIN_MATCH != 3, call update_hash() MIN_MATCH - 3 more times
-                    #[cfg(not(feature = "MIN_MATCH_3"))]
-                    {
-                        for i in 2..MIN_MATCH {
-                            self.ins_h = self.update_hash(self.ins_h, self.window[self.strstart + i]);
-                        }
-                    }
+                    // #[cfg(not(feature = "MIN_MATCH_3"))]
+                    // {
+                    //     for i in 2..MIN_MATCH {
+                    //         self.ins_h = self.update_hash(self.ins_h, self.window[self.strstart + i]);
+                    //     }
+                    // }
                 }
             } else {
                 // No match, output a literal byte
+                // println!("no match");
                 flush = tree.ct_tally(self, state, 0, self.window[self.strstart] as usize);
                 self.lookahead -= 1;
                 self.strstart += 1;
             }
-            if flush {
+            if flush  {
                 self.flush_block_wrapper(tree, state, false);
                 self.block_start = self.strstart as i64;
             }
@@ -291,6 +305,7 @@ impl Deflate {
             while self.lookahead < MIN_LOOKAHEAD && !self.eofile {
                 self.fill_window(state);
             }
+            // println!("self.block_start: {:?}", self.block_start);
         }
         self.flush_block_wrapper(tree, state, true);
         Ok(())
@@ -336,6 +351,7 @@ impl Deflate {
         } else {
             0
         };
+
         // Stop when cur_match becomes <= limit. To simplify the code,
         // we prevent matches with the string of window index 0.
 
@@ -356,7 +372,8 @@ impl Deflate {
         let mut scan_end1 = window[scan + best_len - 1];
         let mut scan_end = window[scan + best_len];
 
-        while cur_match > limit && chain_length != 0 {
+        loop {
+            // println!("best_len: {}", best_len);
             chain_length -= 1;
             let match_index = cur_match;
 
@@ -368,6 +385,9 @@ impl Deflate {
                 || window[match_index + 1] != window[scan + 1]
             {
                 cur_match = self.prev[cur_match & WMASK] as usize;
+                if cur_match <= limit || chain_length == 0 {
+                    break;
+                }
                 continue;
             }
 
@@ -385,14 +405,16 @@ impl Deflate {
                 if len >= nice_match {
                     break;
                 }
-                if len >= scan + best_len {
-                    scan_end1 = window[scan + best_len - 1];
-                    scan_end = window[scan + best_len];
-                }
+                scan_end1 = window[scan + best_len - 1];
+                scan_end = window[scan + best_len];
             }
 
             cur_match = self.prev[cur_match & WMASK] as usize;
+            if cur_match <= limit || chain_length == 0 {
+                break;
+            }
         }
+        // println!("o-best_len: {}", best_len);
 
         best_len
     }

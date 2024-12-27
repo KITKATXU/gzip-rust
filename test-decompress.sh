@@ -21,7 +21,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Check if the custom gzip decompression tool exists and is executable
-custom_gzip="target/debug/gzip"
+custom_gzip="/home/qingxiao/gzip-rust/target/debug/gzip"
 if [[ ! -x "$custom_gzip" ]]; then
   echo "Custom gzip decompression tool not found or not executable: $custom_gzip"
   exit 1
@@ -34,7 +34,7 @@ while IFS= read -r file; do
   echo "Testing file: $file"
 
   # Compress the file using gzip with compression level 1 and keep the original file
-  gzip -1 -k "$file"
+  /home/qingxiao/my_gzip-c/bin/gzip -1 -k "$file"
   gzfile="${file}.gz"
 
   # Check if the compressed file was successfully created

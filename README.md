@@ -4,10 +4,9 @@ This demonstrates the power of using a LLM (here, ChatGPT o1-preview) to safely 
 
 ## Progress Overview
 
-Currently, this translation provides functionality to the gzip -1 to -3 (fast_deflate) compression levels.
-Higher levels are currently not implemented
+Currently, this translation provides functionality for gzip compression levels -1 to -3 (fast_deflate), supporting both compression and decompression. 
 
-The program passes 2 out of the 3 current integration tests, failing on empty files (gzip gives empty files a crc32 of 3 instead of 0 for unknown reasons).
+We have migrated a robust suite of 69 tests, sourced entirely from the original C project. The translated code passes 64 out of 69 tests.
 
 ### Translation Process
 1. **Globals Translation**:
@@ -32,10 +31,7 @@ The program passes 2 out of the 3 current integration tests, failing on empty fi
 
 ### Current Results
 
-- **Current Tests Passed**: 24 Tests
-- **Manual Fixes**:
-    - Simple errors (basic type mismatches): 75 lines
-    - Advanced errors (logical or structural issues): 63 lines
+- **Current Tests Passed**: 64/69 Tests
 - **Notable Issues**:
     - Some **bugs** were identified through manual testing, such as incorrect argument parsing ordering, which broke version and license flags.
     - **Rust auto-fixable warnings** were applied for code cleanliness, but the translated code still ignored `Result` handling in some cases.
@@ -61,18 +57,21 @@ The program passes 2 out of the 3 current integration tests, failing on empty fi
 - **Limited Understanding of C Macros**:  
   The model struggles with handling C macros and conditional compilation flags, which may need special handling or manual intervention in certain cases.
 
+- **Unsupported Negative Indexing**:
+  Rust does not support negative indexing, and the model is unaware if an index is negative. This manifests in the code as direct conversions from signed to unsigned integers, causing out-of-bounds indexing. This requires the model to have a deep understanding of the C code, which is a complex task.
+
+- **Omission of Functionality**:
+  The model often truncates long functions, translating only parts of them, which results in incomplete translations. Manual segmentation is applied to ensure each part is fully translated, after which the segments are reassembled by the model.
+
 ## Next Steps and Plans
 
 1. **Improve Prompting**:
     - Refine the prompting mechanism to improve the translation accuracy, particularly in cases of complex functions, macros, and constants.
 
-2. **Expand Test Coverage**:
-    - Create automated tests to verify the correctness of the translated Rust code, beyond manual testing. This will help track bug fixes and regression.
+2. **Address Hallucinations**:
+    - Improve the model’s understanding of the original C code by providing more context, such as including more related function headers with the help of data flow graphs (DFG).
 
-3. **Address Hallucinations**:
-    - Improve the model’s understanding of the original C code by providing more context, such as including more related functions or entire code blocks.
-
-4. **Error Handling in Rust**:
+3. **Error Handling in Rust**:
     - Ensure that the Rust translation consistently handles errors with `Result` types and removes unsafe operations like `exit()` in favor of proper Rust error handling.
 
 ## Running the Project
@@ -96,10 +95,11 @@ cargo run
 
 2. Run the integration tests:
 ```bash
-./tests.sh
+cargo test
 ```
 
 ## Conclusion
 
-This project demonstrates the feasibility of such a tool using LLMs. Of the over 3000 lines of code translated,
-only about 120 lines were manually fixed, leading to an accuracy of approximately 95% without advanced prompting, fuzzing, testing, or re-prompting methods.
+This project manually translating the gzip C project with the assistance of LLMs, highlighting the current limitations of LLMs in automated translation.
+
+Since there has been no precedent for successfully translating C GNU packages, we not only fixed compilation errors but also manually resolved logical inconsistencies in translating C functionalities to Rust.

@@ -158,7 +158,7 @@ impl Deflate {
                             state.first_call = false; // Set to false after the first call
                         }
                         // 计算 CRC
-                        state.crc16_digest = state.updcrc(Some(&buf[..bytes_read]), bytes_read);
+                        state.crc = state.updcrc(Some(&buf[..bytes_read]), bytes_read);
                     }else{
                         buf.fill(0);
                     }
@@ -296,6 +296,7 @@ impl Deflate {
                 self.lookahead -= 1;
                 self.strstart += 1;
             }
+            // println!("flush={:?}",flush);
             if flush  {
                 self.flush_block_wrapper(tree, state, false);
                 self.block_start = self.strstart as i64;
@@ -312,24 +313,32 @@ impl Deflate {
     }
 
     fn flush_block_wrapper(&mut self, trees: &mut Trees, state: &mut GzipState, eof: bool) -> i64 {
-        if self.block_start >= 0 {
-            let start = self.block_start as usize;
-            let end = self.strstart;
+        // if self.block_start >= 0 {
+            let start = self.block_start;
+            let end = self.strstart as i64;
 
             // Ensure indices are within the bounds of the window
-            if start <= end && end <= self.window.len() {
-                let buf = &self.window[start..end];
-                let stored_len = end - start;
-                trees.flush_block(state, Some(buf), stored_len as u64, eof)
+            if start <= end && end <= self.window.len() as i64 {
+                if start>=0{
+                    let buf = &self.window[start as usize..end as usize];
+                    let stored_len = end - start;
+                    trees.flush_block(state, Some(buf), stored_len as u64, eof)
+                } else {
+                    // let buf = &self.window[start..end];
+                    let stored_len = end - start;
+                    trees.flush_block(state, None, stored_len as u64, eof)
+                }
+                
             } else {
                 // Handle invalid indices
                 panic!("flush_block_wrapper: Invalid window indices");
             }
-        } else {
-            // block_start < 0
-            let stored_len = 0;
-            trees.flush_block(state, None, stored_len, eof)
-        }
+        // } else {
+        //     // block_start < 0
+        //     let stored_len = 0;
+        //     println!("str=0");
+        //     trees.flush_block(state, None, stored_len, eof)
+        // }
     }
 
     fn insert_string(&mut self, s: usize) -> usize {

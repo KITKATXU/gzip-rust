@@ -3,6 +3,10 @@ name = "gzip"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "analysis"
+path = "src/bin/analysis.rs"
+
 [dependencies]
 filetime = "0.2.25"
 atty = "0.2.14"
@@ -10,6 +14,11 @@ crc = "3.2.1"
 byteorder = "1.4.3"
 chrono = "0.4.38"
 backtrace = "0.3"
+serde_json = "1.0.135"
+ripgrep = "14.1.1"
+syn = { version = "2.0", features = ["full", "visit", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
 
 [dev-dependencies]
 tempfile = "3.2"

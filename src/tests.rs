@@ -328,6 +328,85 @@ fn test_stdout_mode() {
 }
 
 #[test]
+fn test_compression_existing_output() {
+    // Create test file and its gz version
+    let test_path = "tests/test-word.txt";
+    let gz_path = format!("{}.gz", test_path);
+    
+    // Create test file with content
+    let mut file = File::create(test_path).unwrap();
+    file.write_all(b"test content").unwrap();
+    
+    // Ensure .gz file exists
+    File::create(&gz_path).unwrap();
+    
+    // Run compression test
+    let result = Command::new("./target/debug/gzip")
+        .args(&[ "-k", "-1", test_path])
+        .output()
+        .expect("Failed to execute our gzip");
+
+    // Run the same command with system gzip for comparison
+    let system_result = Command::new("gzip")
+        .args(&[ "-k", "-1", test_path])
+        .output()
+        .expect("Failed to execute system gzip");
+
+    // Compare outputs
+    assert_eq!(
+        result.status.code(),
+        system_result.status.code(),
+        "Exit status codes don't match"
+    );
+    assert_eq!(
+        result.stderr,
+        system_result.stderr,
+        "Error messages don't match"
+    );
+    
+    // Cleanup
+    fs::remove_file(&gz_path).ok();
+    // fs::remove_file(test_path).ok();
+}
+
+#[test]
+fn test_decompression_existing_output() {
+    // Create test file and its gz version
+    let test_path = "tests/test-word.txt";
+    let gz_path = format!("{}.gz", test_path);
+    
+    // Ensure .gz file exists
+    File::create(&gz_path).unwrap();
+    
+    // Run decompression test
+    let result = Command::new("./target/debug/gzip")
+        .args(&["-d", gz_path.as_str()])
+        .output()
+        .expect("Failed to execute gzip");
+
+    // Run the same command with system gzip for comparison
+    let system_result = Command::new("gzip")
+        .args(&["-d", gz_path.as_str()])
+        .output()
+        .expect("Failed to execute system gzip");
+
+    // Compare outputs
+    assert_eq!(
+        result.status.code(),
+        system_result.status.code(),
+        "Exit status codes don't match"
+    );
+    assert_eq!(
+        result.stderr,
+        system_result.stderr,
+        "Error messages don't match"
+    );
+    
+    // Cleanup
+    fs::remove_file(&gz_path).ok();
+}
+
+#[test]
 fn test_quiet_mode() {
     assert!(compare_gzip_outputs(
         &["-k", "-f", "-q", "-1", "tests/test-word.txt"],
@@ -359,7 +438,7 @@ fn test_recursive() {
     ));
 }
 
-// #[test]
+#[test]
 fn test_combined_options() {
     assert!(compare_gzip_outputs(
         &["-1c", "tests/test-word.txt"],
@@ -367,10 +446,10 @@ fn test_combined_options() {
     ));
 }
 
-// #[test]
+#[test]
 fn test_suffix_option() {
     assert!(compare_gzip_outputs(
-        &["-k", "-f", "-S", ".gzip", "tests/test-word.txt"],
+        &["-k", "-f","-1", "-S", ".gzip", "tests/test-word.txt"],
         Some("tests/test-word.txt")
     ));
 }
@@ -549,17 +628,17 @@ fn test_size_32833() {
     test_compression_with_size(32833);
 }
 
-// #[test]
+#[test]
 fn test_size_131071() {
     test_compression_with_size(131071);
 }
 
-// #[test]
+#[test]
 fn test_size_131072() {
     test_compression_with_size(131072);
 }
 
-// #[test]
+#[test]
 fn test_size_131073() {
     test_compression_with_size(131073);
 }
@@ -651,6 +730,13 @@ fn test_stdout_mode_decompress() {
 
 #[test]
 fn test_recursive_decompress() {
+
+    // Clean up any existing test directory first
+    let test_dir = "tests/testing_decomp";
+    if Path::new(test_dir).exists() {
+        fs::remove_dir_all(test_dir).expect("Failed to remove existing test directory");
+    }
+
     // Create test directory structure
     fs::create_dir_all("tests/testing_decomp").expect("Failed to create test directory");
     fs::copy("tests/test-word.txt", "tests/testing_decomp/test-word.txt")
@@ -976,7 +1062,7 @@ fn test_huft_segv_decompression() {
     }
 }
 
-// #[test]
+#[test]
 fn test_bug33501_decompression() {
     // Create temporary files
     let test_file = NamedTempFile::new().unwrap();
@@ -1032,7 +1118,7 @@ fn test_bug33501_decompression() {
     }
 }
 
-// #[test]
+#[test]
 fn test_pure_uncompressed_data() {
     // Create temporary files
     let mut input_file = NamedTempFile::new().unwrap();
@@ -1080,7 +1166,7 @@ fn test_pure_uncompressed_data() {
     }
 }
 
-// #[test]
+#[test]
 fn test_compressed_followed_by_uncompressed() {
     // Create temporary files
     let input_file = NamedTempFile::new().unwrap();
@@ -1146,7 +1232,7 @@ fn test_compressed_followed_by_uncompressed() {
     }
 }
 
-// #[test]
+#[test]
 fn test_double_compressed_data() {
     // Create temporary files
     let input_file = NamedTempFile::new().unwrap();

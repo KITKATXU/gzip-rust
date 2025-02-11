@@ -55,6 +55,13 @@ const BL_ORDER: [usize; BL_CODES] = [
     14, 1, 15,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TreeType {
+    Literal,
+    Distance,
+    BitLength,
+}
+
 #[derive(Default, Copy, Clone, Debug)]
 pub struct CtData {
     freq: u16,
@@ -73,12 +80,12 @@ pub struct Trees<'a> {
     pub length_code: [u8; 256],
     pub dist_code: [u8; 512],
     pub bl_count: [i32; MAX_BITS + 1],
-    pub static_ltree: Rc<RefCell<Vec<CtData>>>,
-    pub static_dtree: Rc<RefCell<Vec<CtData>>>,
-    pub bltree: Rc<RefCell<Vec<CtData>>>,
-    pub dyn_ltree: Rc<RefCell<Vec<CtData>>>,
-    pub dyn_dtree: Rc<RefCell<Vec<CtData>>>,
-    pub bl_tree: Box<[CtData; 2 * BL_CODES + 1]>,
+    pub static_ltree: Vec<CtData>,
+    pub static_dtree: Vec<CtData>,
+    pub bltree: Vec<CtData>,
+    pub dyn_ltree: Vec<CtData>,
+    pub dyn_dtree: Vec<CtData>,
+    pub bl_tree: Vec<CtData>,
     pub opt_len: u64,
     pub static_len: u64,
     pub last_lit: i32,
@@ -100,8 +107,7 @@ pub struct Trees<'a> {
 
 #[derive(Clone)]
 struct TreeDesc<'a> {
-    dyn_tree: Rc<RefCell<Vec<CtData>>>,      // The dynamic tree
-    static_tree: Option<Rc<RefCell<Vec<CtData>>>>, // The corresponding static tree or None
+    tree_type: TreeType,  // 用于标识使用哪个树
     extra_bits: Option<&'a [i32]>,    // Extra bits for each code or None
     extra_base: usize,
     elems: usize,                    // Number of elements in the tree
@@ -109,13 +115,20 @@ struct TreeDesc<'a> {
     max_code: i32,                   // Largest code with non-zero frequency
 }
 
+// 添加一个新的枚举来区分静态树和动态树
+enum TreeKind {
+    Static,
+    Dynamic,
+}
+
 impl<'a> Trees<'a> {
     pub fn new() -> Self {
-        let static_ltree = Rc::new(RefCell::new(vec![CtData::default(); L_CODES + 2]));
-        let static_dtree = Rc::new(RefCell::new(vec![CtData::default(); D_CODES]));
-        let bltree = Rc::new(RefCell::new(vec![CtData::default(); 2 * BL_CODES + 1]));
-        let dyn_ltree = Rc::new(RefCell::new(vec![CtData::default(); HEAP_SIZE]));
-        let dyn_dtree = Rc::new(RefCell::new(vec![CtData::default(); 2 * D_CODES + 1]));
+        let static_ltree = vec![CtData::default(); L_CODES + 2];
+        let static_dtree = vec![CtData::default(); D_CODES];
+        let bltree = vec![CtData::default(); 2 * BL_CODES + 1];
+        let dyn_ltree = vec![CtData::default(); HEAP_SIZE];
+        let dyn_dtree = vec![CtData::default(); 2 * D_CODES + 1];
+        let bl_tree = vec![CtData::default(); 2 * BL_CODES + 1];
         Self {
             file_type: None,
             file_method: 0,
@@ -126,12 +139,12 @@ impl<'a> Trees<'a> {
             length_code: [0; 256],
             dist_code: [0; 512],
             bl_count: [0; MAX_BITS + 1],
-            static_ltree: static_ltree.clone(),
-            static_dtree: static_dtree.clone(),
-            bltree: bltree.clone(),
-            dyn_ltree: dyn_ltree.clone(),
-            dyn_dtree: dyn_dtree.clone(),
-            bl_tree: Box::new([CtData::default(); 2 * BL_CODES + 1]),
+            static_ltree,
+            static_dtree,
+            bltree,
+            dyn_ltree,
+            dyn_dtree,
+            bl_tree,
             opt_len: 0,
             static_len: 0,
             last_lit: 0,
@@ -143,8 +156,9 @@ impl<'a> Trees<'a> {
             d_buf: Box::new([0; DIST_BUFSIZE]),
             flag_buf: Box::new([0; LIT_BUFSIZE/8]),
             l_desc: TreeDesc {
-                dyn_tree: dyn_ltree,
-                static_tree: Some(static_ltree),
+                tree_type: TreeType::Literal,
+                // dyn_tree: dyn_ltree,
+                // static_tree: Some(static_ltree),
                 extra_bits: Some(&EXTRA_LBITS),
                 extra_base: LITERALS+1,
                 elems: L_CODES,
@@ -152,8 +166,9 @@ impl<'a> Trees<'a> {
                 max_code: 0,
             },
             d_desc: TreeDesc {
-                dyn_tree: dyn_dtree,
-                static_tree: Some(static_dtree),
+                tree_type: TreeType::Distance,
+                // dyn_tree: dyn_dtree,
+                // static_tree: Some(static_dtree),
                 extra_bits: Some(&EXTRA_DBITS),
                 extra_base: 0,
                 elems: D_CODES,
@@ -161,8 +176,9 @@ impl<'a> Trees<'a> {
                 max_code: 0,
             },
             bl_desc: TreeDesc {
-                dyn_tree: bltree,
-                static_tree: None,
+                tree_type: TreeType::BitLength,
+                // dyn_tree: bltree,
+                // static_tree: None,
                 extra_bits: Some(&EXTRA_BLBITS),
                 extra_base: 0,
                 elems: BL_CODES,
@@ -173,6 +189,26 @@ impl<'a> Trees<'a> {
             depth: [0; 2*L_CODES+1],
             heap_len: 0,
             heap_max: 0
+        }
+    }
+
+
+
+    // 根据树类型获取对应的树数据的可变引用
+    fn get_tree_mut(&mut self, tree_type: TreeType) -> &mut [CtData] {
+        match tree_type {
+            TreeType::Literal => &mut self.dyn_ltree,
+            TreeType::Distance => &mut self.dyn_dtree,
+            TreeType::BitLength => &mut self.bl_tree,
+        }
+    }
+
+    // 根据树类型获取对应的静态树的可变引用
+    fn get_static_tree_mut(&mut self, tree_type: TreeType) -> &mut [CtData] {
+        match tree_type {
+            TreeType::Literal => &mut self.static_ltree,
+            TreeType::Distance => &mut self.static_dtree,
+            TreeType::BitLength => &mut self.bl_tree,  // BitLength 树没有静态版本
         }
     }
 
@@ -187,7 +223,7 @@ impl<'a> Trees<'a> {
         self.compressed_len = 0;
         self.input_len = 0;
 
-        if self.static_dtree.borrow()[0].len != 0 {
+        if self.static_dtree[0].len != 0 {
             return; // ct_init already called
         }
 
@@ -244,33 +280,34 @@ impl<'a> Trees<'a> {
 
         n = 0;
         while n <= 143 {
-            self.static_ltree.borrow_mut()[n as usize].len = 8;
+            self.static_ltree[n as usize].len = 8;
             self.bl_count[8] += 1;
             n += 1;
         }
         while n <= 255 {
-            self.static_ltree.borrow_mut()[n as usize].len = 9;
+            self.static_ltree[n as usize].len = 9;
             self.bl_count[9] += 1;
             n += 1;
         }
         while n <= 279 {
-            self.static_ltree.borrow_mut()[n as usize].len = 7;
+            self.static_ltree[n as usize].len = 7;
             self.bl_count[7] += 1;
             n += 1;
         }
         while n <= 287 {
-            self.static_ltree.borrow_mut()[n as usize].len = 8;
+            self.static_ltree[n as usize].len = 8;
             self.bl_count[8] += 1;
             n += 1;
         }
 
         // Generate the codes
-        Self::gen_codes(&self.bl_count, self.static_ltree.borrow_mut().deref_mut(), (L_CODES + 1) as i32);
+        self.l_desc.max_code = (L_CODES+1) as i32;
+        self.gen_codes(TreeType::Literal, TreeKind::Static);
 
         // The static distance tree is trivial
         for n in 0..D_CODES as i32 {
-            self.static_dtree.borrow_mut()[n as usize].len = 5;
-            self.static_dtree.borrow_mut()[n as usize].code = Self::bi_reverse(n as u16, 5);
+            self.static_dtree[n as usize].len = 5;
+            self.static_dtree[n as usize].code = Self::bi_reverse(n as u16, 5);
         }
 
         // Initialize the first block of the first file
@@ -280,12 +317,12 @@ impl<'a> Trees<'a> {
     fn init_block(&mut self) {
         // Initialize the dynamic literal tree frequencies
         for n in 0..L_CODES {
-            self.dyn_ltree.borrow_mut()[n].freq = 0;
+            self.dyn_ltree[n].freq = 0;
         }
 
         // Initialize the dynamic distance tree frequencies
         for n in 0..D_CODES {
-            self.dyn_dtree.borrow_mut()[n].freq = 0;
+            self.dyn_dtree[n].freq = 0;
         }
 
         // Initialize the bit length tree frequencies
@@ -294,28 +331,68 @@ impl<'a> Trees<'a> {
         }
 
         // Set the frequency of the END_BLOCK symbol to 1
-        self.dyn_ltree.borrow_mut()[END_BLOCK].freq = 1;
+        self.dyn_ltree[END_BLOCK].freq = 1;
+
+        // Reset all counters and flags
+        self.opt_len = 0;
+        self.static_len = 0;
+        self.last_lit = 0;
+        self.last_dist = 0;
+        self.last_flags = 0;
+        self.flags = 0;
+        self.flag_bit = 1;
     }
 
-    fn gen_codes(bl_count: &[i32; MAX_BITS + 1], tree: &mut [CtData], max_code: i32) {
+    // 修改 gen_codes 为实例方法
+    fn gen_codes(&mut self, tree_type: TreeType, kind: TreeKind) {
+        // 根据树类型和种类选择相应的树和最大代码值
+        let (tree, max_code) = match (tree_type, kind) {
+            // 静态树
+            (TreeType::Literal, TreeKind::Static) => (&mut self.static_ltree, (L_CODES + 1) as i32),
+            (TreeType::Distance, TreeKind::Static) => (&mut self.static_dtree, D_CODES as i32),
+            
+            // 动态树
+            (TreeType::Literal, TreeKind::Dynamic) => (&mut self.dyn_ltree, self.l_desc.max_code),
+            (TreeType::Distance, TreeKind::Dynamic) => (&mut self.dyn_dtree, self.d_desc.max_code),
+            (TreeType::BitLength, _) => (&mut self.bl_tree, self.bl_desc.max_code),
+        };
+
         let mut next_code = [0u16; MAX_BITS + 1];
         let mut code = 0u16;
 
-        // Generate the next_code array
-        for bits in 1..=MAX_BITS {
-            code = ((code as i32 + bl_count[bits - 1]) << 1) as u16;
-            next_code[bits] = code;
-        }
+        // println!("\n=== Starting gen_codes ===");
+        // println!("tree_type: {:?}, max_code: {}", tree_type, max_code);
 
-        // Assign codes to tree nodes
-        for n in 0..max_code as usize {
+        // 生成 next_code 数组
+        for bits in 1..=MAX_BITS {
+            code = ((code + self.bl_count[bits - 1] as u16) << 1) as u16;
+            next_code[bits] = code;
+            // println!("bits: {}, bl_count[{}]: {}, code: {}, next_code[{}]: {}", 
+            //     bits, 
+            //     bits-1, 
+            //     self.bl_count[bits - 1], 
+            //     code, 
+            //     bits, 
+            //     next_code[bits]
+            // );
+        }
+        
+        // println!("\n=== Assigning codes to tree nodes ===");
+        // 为树节点分配编码
+        for n in 0..=max_code as usize {
             let len = tree[n].len as usize;
+            // println!("node: {}, len: {}", n, len);
             if len != 0 {
-                tree[n].code = Self::bi_reverse(next_code[len], len);
+                let reversed = Self::bi_reverse(next_code[len], len);
+                // println!("  code before reverse: {}, after reverse: {}", next_code[len], reversed);
+                tree[n].code = reversed;
                 next_code[len] += 1;
+                // println!("  updated next_code[{}]: {}", len, next_code[len]);
             }
         }
+        // println!("=== Finished gen_codes ===\n");
     }
+
 
     fn bi_reverse(code: u16, len: usize) -> u16 {
         let mut code = code;
@@ -342,7 +419,7 @@ impl<'a> Trees<'a> {
         
         if dist == 0 {
             // lc is the unmatched character (literal)
-            self.dyn_ltree.borrow_mut()[lc].freq += 1;
+            self.dyn_ltree[lc].freq += 1;
             // println!("literal: {} freq: {}", lc, self.dyn_ltree.borrow_mut()[lc].freq);
         } else {
             // lc is the match length - MIN_MATCH
@@ -354,15 +431,20 @@ impl<'a> Trees<'a> {
                 "ct_tally: bad match"
             );
 
-            self.dyn_ltree.borrow_mut()[self.length_code[lc] as usize + LITERALS + 1].freq += 1;
-            self.dyn_dtree.borrow_mut()[self.d_code(dist)].freq += 1;
+            // 先计算所有需要的索引
+            let length_index = self.length_code[lc] as usize + LITERALS + 1;
+            let dist_index = self.d_code(dist);
+
+            // 然后一次性更新频率
+            self.dyn_ltree[length_index].freq += 1;
+            self.dyn_dtree[dist_index].freq += 1;
 
             self.d_buf[self.last_dist as usize] = dist as u16 as usize;
             self.last_dist += 1;
             self.flags |= self.flag_bit;
             // println!("dist: {}", dist);
-            // println!("lidx:{:?} dyn_ltree: {:?}", self.length_code[lc] as usize + LITERALS + 1, self.dyn_ltree.borrow_mut()[self.length_code[lc] as usize + LITERALS + 1].freq);
-            // println!("didx:{:?} dyn_dtree: {:?}", self.d_code(dist), self.dyn_dtree.borrow_mut()[self.d_code(dist)].freq);
+            // println!("lidx:{:?} dyn_ltree: {:?}", self.length_code[lc] as usize + LITERALS + 1, self.dyn_ltree[self.length_code[lc] as usize + LITERALS + 1].freq);
+            // println!("didx:{:?} dyn_dtree: {:?}", self.d_code(dist), self.dyn_dtree[self.d_code(dist)].freq);
             
         }
 
@@ -384,7 +466,7 @@ impl<'a> Trees<'a> {
             let in_length = deflate.strstart - deflate.block_start as usize;
 
             for dcode in 0..D_CODES {
-                out_length += self.dyn_dtree.borrow()[dcode].freq as u64
+                out_length += self.dyn_dtree[dcode].freq as u64
                     * (5 + EXTRA_DBITS[dcode] as u64);
             }
 
@@ -450,7 +532,7 @@ impl<'a> Trees<'a> {
         // println!("flush_block: stored_len: {}", stored_len);
         
         // Construct the literal and distance trees
-        self.build_tree(state, &mut self.l_desc.clone());
+        self.build_tree(state,  TreeType::Literal);
         // if state.verbose > 1 {
         // if true {
         //     eprintln!(
@@ -459,7 +541,7 @@ impl<'a> Trees<'a> {
         //     );
         // }
 
-        self.build_tree(state, &mut self.d_desc.clone());
+        self.build_tree(state, TreeType::Distance);
         // if state.verbose > 1 {
         // if true {
         //     eprintln!(
@@ -518,9 +600,10 @@ impl<'a> Trees<'a> {
         } else if static_lenb == opt_lenb {
             let eof_flag = if eof { 1 } else { 0 };
             state.send_bits(((STATIC_TREES << 1) + eof_flag) as u16, 3);
-            self.compress_block(state, self.static_ltree.clone().borrow().deref(), self.static_dtree.clone().borrow().deref());
+            self.compress_block(state, true);  
             self.compressed_len += 3 + self.static_len;
         } else {
+            // println!("lbf");
             let eof_flag = if eof { 1 } else { 0 };
             state.send_bits(((DYN_TREES << 1) + eof_flag) as u16, 3);
             self.send_all_trees(
@@ -529,7 +612,7 @@ impl<'a> Trees<'a> {
                 (self.d_desc.max_code + 1) as usize,
                 (max_blindex + 1) as usize,
             );
-            self.compress_block(state, self.dyn_ltree.clone().borrow().deref(), self.dyn_dtree.clone().borrow().deref());
+            self.compress_block(state, false); 
             self.compressed_len += 3 + self.opt_len;
         }
 
@@ -581,14 +664,20 @@ impl<'a> Trees<'a> {
         }
 
         // Send the literal tree
-        self.send_tree(state, &self.dyn_ltree.clone().borrow().deref(), lcodes - 1);
+        self.send_tree(state, TreeType::Literal);
 
         // Send the distance tree
-        self.send_tree(state, self.dyn_dtree.clone().borrow().deref(), dcodes - 1);
+        self.send_tree(state, TreeType::Distance);
     }
 
-    /// Send a literal or distance tree in compressed form, using the codes in bl_tree.
-    fn send_tree(&mut self, state: &mut GzipState, tree: &[CtData], max_code: usize) {
+    fn send_tree(&mut self, state: &mut GzipState, tree_type: TreeType) {
+        // 根据树类型选择相应的树和最大代码值
+        let (tree, max_code) = match tree_type {
+            TreeType::Literal => (&self.dyn_ltree, self.l_desc.max_code as usize),
+            TreeType::Distance => (&self.dyn_dtree, self.d_desc.max_code as usize),
+            TreeType::BitLength => (&self.bl_tree, self.bl_desc.max_code as usize),
+        };
+
         let mut prevlen: i32 = -1; // Last emitted length
         let mut curlen: i32; // Length of current code
         let mut nextlen: i32 = tree[0].len as i32; // Length of next code
@@ -618,11 +707,11 @@ impl<'a> Trees<'a> {
                 if count < min_count {
                     // Send the code 'count' times
                     for _ in 0..count {
-                        self.send_code(state, curlen as usize, self.bl_tree.deref());
+                        self.send_code(state, curlen as usize, &self.bl_tree);
                     }
                 } else if curlen != 0 {
                     if curlen != prevlen {
-                        self.send_code(state, curlen as usize, self.bl_tree.deref());
+                        self.send_code(state, curlen as usize, &self.bl_tree);
                         count -= 1;
                     }
                     assert!(
@@ -630,13 +719,13 @@ impl<'a> Trees<'a> {
                         "Invalid count for REP_3_6: count = {}",
                         count
                     );
-                    self.send_code(state, REP_3_6, self.bl_tree.deref());
+                    self.send_code(state, REP_3_6, &self.bl_tree);
                     state.send_bits((count - 3) as u16, 2);
                 } else if count <= 10 {
-                    self.send_code(state, REPZ_3_10, self.bl_tree.deref());
+                    self.send_code(state, REPZ_3_10, &self.bl_tree);
                     state.send_bits((count - 3) as u16, 3);
                 } else {
-                    self.send_code(state, REPZ_11_138, self.bl_tree.deref());
+                    self.send_code(state, REPZ_11_138, &self.bl_tree);
                     state.send_bits((count - 11) as u16, 7);
                 }
 
@@ -655,7 +744,9 @@ impl<'a> Trees<'a> {
                 }
             }
         }
-    }
+    }        
+    
+
 
     fn set_file_type(&mut self) {
         let mut n = 0;
@@ -663,15 +754,15 @@ impl<'a> Trees<'a> {
         let mut bin_freq: u32 = 0;
 
         while n < 7 {
-            bin_freq += self.dyn_ltree.borrow()[n].freq as u32;
+            bin_freq += self.dyn_ltree[n].freq as u32;
             n += 1;
         }
         while n < 128 {
-            ascii_freq += self.dyn_ltree.borrow()[n].freq as u32;
+            ascii_freq += self.dyn_ltree[n].freq as u32;
             n += 1;
         }
         while n < LITERALS {
-            bin_freq += self.dyn_ltree.borrow()[n].freq as u32;
+            bin_freq += self.dyn_ltree[n].freq as u32;
             n += 1;
         }
 
@@ -686,24 +777,27 @@ impl<'a> Trees<'a> {
         eprintln!("Warning: {}", msg);
     }
 
+    // 修改 compress_block 的签名，使用 TreeType 来指定使用哪个树
+    fn compress_block(&mut self, state: &mut GzipState, use_static: bool) {
+        let (ltree, dtree) = if use_static {
+            (&self.static_ltree, &self.static_dtree)
+        } else {
+            (&self.dyn_ltree, &self.dyn_dtree)
+        };
 
-    /// Send the block data compressed using the given Huffman trees
-    fn compress_block(&mut self, state: &mut GzipState, ltree: &[CtData], dtree: &[CtData]) {
-        let mut dist: u32;      // Distance of matched string
-        let mut lc: i32;        // Match length or unmatched char (if dist == 0)
-        let mut lx: usize = 0;  // Running index in l_buf
-        let mut dx: usize = 0;  // Running index in d_buf
-        let mut fx: usize = 0;  // Running index in flag_buf
-        let mut flag: u8 = 0;   // Current flags
-        let mut code: usize;    // The code to send
-        let mut extra: u8;      // Number of extra bits to send
-        // println!("last_lit:{:?}",self.last_lit);
-        // println!("comprd:_l:{:?}",self.compressed_len);
+        let mut dist: u32;      // 匹配字符串的距离
+        let mut lc: i32;        // 匹配长度或未匹配字符(如果 dist == 0)
+        let mut lx: usize = 0;  // l_buf 的运行索引
+        let mut dx: usize = 0;  // d_buf 的运行索引
+        let mut fx: usize = 0;  // flag_buf 的运行索引
+        let mut flag: u8 = 0;   // 当前标志
+        let mut code: usize;    // 要发送的代码
+        let mut extra: u8;      // 要发送的额外位数
 
-        // Check if there are any literals to process
+        // 检查是否有任何字面值要处理
         if self.last_lit != 0 {
             while lx < self.last_lit as usize {
-                // Load a new flag byte every 8 literals
+                // 每8个字面值加载一个新的标志字节
                 if (lx & 7) == 0 {
                     flag = self.flag_buf[fx] as u8;
                     fx += 1;
@@ -713,48 +807,47 @@ impl<'a> Trees<'a> {
                 lx += 1;
 
                 if (flag & 1) == 0 {
-                    // It's a literal byte
-                    self.send_code(state, lc as usize, ltree); // Send a literal byte
-                    // Optionally trace the literal character
-                    // if lc is printable, you can log it for debugging
+                    // 发送字面字节
+                    self.send_code(state, lc as usize, ltree);
                 } else {
-                    // It's a match
-                    // Here, lc is the match length minus MIN_MATCH
+                    // 这是一个匹配
                     let lc_usize = lc as usize;
                     code = self.length_code[lc_usize] as usize;
-                    self.send_code(state, code + LITERALS + 1, ltree); // Send the length code
+                    self.send_code(state, code + LITERALS + 1, ltree); // 发送长度代码
                     extra = EXTRA_LBITS[code] as u8;
 
                     if extra != 0 {
                         let base_len = self.base_length[code] as i32;
                         let lc_adjusted = lc - base_len;
-                        state.send_bits(lc_adjusted as u16, extra); // Send the extra length bits
+                        state.send_bits(lc_adjusted as u16, extra); // 发送额外的长度位
                     }
 
                     dist = self.d_buf[dx] as u32;
                     dx += 1;
 
-                    // Here, dist is the match distance minus 1
+                    // dist 是匹配距离减1
                     code = self.d_code(dist as usize);
                     assert!(code < D_CODES, "bad d_code");
 
-                    self.send_code(state, code, dtree); // Send the distance code
+                    self.send_code(state, code, dtree); // 发送距离代码
                     extra = EXTRA_DBITS[code] as u8;
 
                     if extra != 0 {
                         let base_dist = self.base_dist[code] as u32;
                         let dist_adjusted = dist - base_dist;
-                        state.send_bits(dist_adjusted as u16, extra); // Send the extra distance bits
+                        state.send_bits(dist_adjusted as u16, extra); // 发送额外的距离位
                     }
                 }
 
-                flag >>= 1; // Move to the next flag bit
+                flag >>= 1; // 移动到下一个标志位
             }
         }
 
-        // Send the end of block code
+        // 发送块结束代码
         self.send_code(state, END_BLOCK, ltree);
-    }
+    }    
+    
+
 
     fn send_code(&self, state: &mut GzipState, c: usize, tree: &[CtData]) {
         // Debugging output if verbose > 1
@@ -801,136 +894,163 @@ impl<'a> Trees<'a> {
             }
         }
     }
+         
+    fn build_tree(&mut self, state: &GzipState, tree_type: TreeType) {
+        // 先获取必要的常量值
+        let elems = match tree_type {
+            TreeType::Literal => self.l_desc.elems,
+            TreeType::Distance => self.d_desc.elems,
+            TreeType::BitLength => self.bl_desc.elems,
+        };
 
-    fn build_tree(&mut self, state: &GzipState, desc: &mut TreeDesc) {
-        let tree = desc.dyn_tree.clone();
-        let stree = desc.static_tree.as_ref();
-        let elems = desc.elems;
-        let mut n: usize = 0;
-        let mut m: usize = 0;
-        let mut max_code = -1; // Largest code with non-zero frequency
-        let mut node = elems;  // Next internal node of the tree
+        let mut max_code = -1;
+        let mut node = elems;  // 下一个内部节点的索引
+        // println!("elems={:?}",elems);
 
-        // Construct the initial heap, with the least frequent element at heap[SMALLEST].
-        // The sons of heap[n] are heap[2*n] and heap[2*n+1]. heap[0] is not used.
+        // 构建初始堆，频率最小的元素在 heap[SMALLEST]
         self.heap_len = 0;
         self.heap_max = HEAP_SIZE;
-        // println!("elems: {}", elems);
 
+        // 遍历树节点，初始化堆
         for n in 0..elems {
-            if tree.borrow()[n].freq != 0 {
+            let freq = match tree_type {
+                TreeType::Literal => self.dyn_ltree[n].freq,
+                TreeType::Distance => self.dyn_dtree[n].freq,
+                TreeType::BitLength => self.bl_tree[n].freq,
+            };
+
+            if freq != 0 {
                 self.heap_len += 1;
-                self.heap[self.heap_len] = n as i32;
                 max_code = n as i32;
+                self.heap[self.heap_len] = n as i32;
                 self.depth[n] = 0;
-                // println!("n: {}", n);
-                // println!("heap_len: {}", self.heap_len);
+                // println!("n={:?} hplen={:?}",n,self.heap_len);
             } else {
-                tree.borrow_mut()[n].len = 0;
+                // 设置长度为0
+                match tree_type {
+                    TreeType::Literal => self.dyn_ltree[n].len = 0,
+                    TreeType::Distance => self.dyn_dtree[n].len = 0,
+                    TreeType::BitLength => self.bl_tree[n].len = 0,
+                }
             }
         }
 
-        // The PKZIP format requires that at least one distance code exists,
-        // and that at least one bit should be sent even if there is only one
-        // possible code. So to avoid special checks later on, we force at least
-        // two codes of non-zero frequency.
+        // 确保至少有两个非零频率的码
         while self.heap_len < 2 {
-            // max_code += 1;
-            let new_node = if max_code < 2 { 
+            let new_node = if max_code < 2 {
                 max_code += 1;
-                max_code 
-            } else { 
-                0 
+                max_code
+            } else {
+                0
             } as usize;
+            
             self.heap_len += 1;
             self.heap[self.heap_len] = new_node as i32;
-            // println!("new_node: {}", new_node);
-            // println!("heap_len: {}", self.heap_len);
-            tree.borrow_mut()[new_node].freq = 1;
+            
+            // 更新频率和深度
+            match tree_type {
+                TreeType::Literal => self.dyn_ltree[new_node].freq = 1,
+                TreeType::Distance => self.dyn_dtree[new_node].freq = 1,
+                TreeType::BitLength => self.bl_tree[new_node].freq = 1,
+            }
             self.depth[new_node] = 0;
             self.opt_len = self.opt_len.wrapping_sub(1);
-            if let Some(stree) = stree {
-                self.static_len = self.static_len.wrapping_sub(stree.borrow()[new_node].len as u64);
+            
+            // 如果是字面树或距离树，更新静态长度
+            if tree_type != TreeType::BitLength {
+                let static_len = match tree_type {
+                    TreeType::Literal => self.static_ltree[new_node].len,
+                    TreeType::Distance => self.static_dtree[new_node].len,
+                    TreeType::BitLength => 0,
+                };
+                self.static_len = self.static_len.wrapping_sub(static_len as u64);
             }
-            // new_node is 0 or 1, so it does not have extra bits
         }
-        desc.max_code = max_code as i32;
 
-        // The elements heap[heap_len/2+1 .. heap_len] are leaves of the tree,
-        // establish sub-heaps of increasing lengths:
+        // 更新最大代码值
+        match tree_type {
+            TreeType::Literal => self.l_desc.max_code = max_code,
+            TreeType::Distance => self.d_desc.max_code = max_code,
+            TreeType::BitLength => self.bl_desc.max_code = max_code,
+        }
+        // println!("upd={:?} upd_l={:?}",max_code, self.l_desc.max_code);
+
+        // 堆的元素 heap[heap_len/2+1 .. heap_len] 是叶子节点
+        // 建立子堆
         for n in (1..=(self.heap_len / 2)).rev() {
-            // println!("n: {}", n);
-            self.pq_down_heap(tree.borrow().deref(), n);
+            self.pq_down_heap(tree_type, n);
         }
 
-        // Construct the Huffman tree by repeatedly combining the two least frequent nodes.
-        loop {
-            // println!("n: {}", n);
-            n = self.pq_remove(tree.borrow().deref()) as usize; // Node of least frequency
-            m = self.heap[SMALLEST] as usize;  // Node of next least frequency
-
-            // println!("heap_len: {}", self.heap_len);
-            // println!("heap_max: {}", self.heap_max);
-            // println!("n:{}", n);
-            // println!("m:{}", m);
+        // 通过重复组合频率最小的两个节点来构建霍夫曼树
+        while self.heap_len >= 2 {
+            // 移除堆中频率最小的两个节点
+            let n = self.pq_remove(tree_type) as usize;
+            let m = self.heap[SMALLEST] as usize;
 
             self.heap_max -= 1;
-            self.heap[self.heap_max] = n as i32; // Keep the nodes sorted by frequency
+            self.heap[self.heap_max] = n as i32;
             self.heap_max -= 1;
             self.heap[self.heap_max] = m as i32;
 
-            // Create a new node as the parent of n and m
-            let freq = tree.borrow()[n].freq + tree.borrow()[m].freq;
-            tree.borrow_mut()[node].freq = freq;
-            self.depth[node] = self.depth[n].max(self.depth[m]) + 1;
-            tree.borrow_mut()[n].dad = node as u16;
-            tree.borrow_mut()[m].dad = node as u16;
+            // 创建新节点作为它们的父节点
+            let freq_sum = match tree_type {
+                TreeType::Literal => self.dyn_ltree[n].freq + self.dyn_ltree[m].freq,
+                TreeType::Distance => self.dyn_dtree[n].freq + self.dyn_dtree[m].freq,
+                TreeType::BitLength => self.bl_tree[n].freq + self.bl_tree[m].freq,
+            };
 
-            // Insert the new node into the heap
-            self.heap[SMALLEST] = node as i32;
-            // println!("heap[SMALLEST]: {}", self.heap[SMALLEST]);
-            self.pq_down_heap(tree.borrow_mut().deref_mut(), SMALLEST);
-            // println!("heap[SMALLEST]: {}", self.heap[SMALLEST]);
-            node += 1;
-
-            
-
-            if self.heap_len < 2 {
-                break;
+            // 更新新节点的频率和深度
+            match tree_type {
+                TreeType::Literal => {
+                    self.dyn_ltree[node].freq = freq_sum;
+                    self.dyn_ltree[n].dad = node as u16;
+                    self.dyn_ltree[m].dad = node as u16;
+                },
+                TreeType::Distance => {
+                    self.dyn_dtree[node].freq = freq_sum;
+                    self.dyn_dtree[n].dad = node as u16;
+                    self.dyn_dtree[m].dad = node as u16;
+                },
+                TreeType::BitLength => {
+                    self.bl_tree[node].freq = freq_sum;
+                    self.bl_tree[n].dad = node as u16;
+                    self.bl_tree[m].dad = node as u16;
+                },
             }
 
+            self.depth[node] = (self.depth[n].max(self.depth[m]) + 1) as i32;
+
+            // 将新节点放入堆中
+            self.heap[SMALLEST] = node as i32;
+            self.pq_down_heap(tree_type, SMALLEST);
+
+            node += 1;
         }
-        // println!("heap_len: {}", self.heap_len);
-        // println!("heap_max: {}", self.heap_max);
-        // println!("n:{}", n);
-        // println!("m:{}", m);
 
         self.heap_max -= 1;
         self.heap[self.heap_max] = self.heap[SMALLEST];
 
-        // At this point, the fields freq and dad are set. We can now generate the bit lengths.
-        self.gen_bitlen(state, desc);
+        // 生成位长度
+        self.gen_bitlen(state, tree_type);
 
-        // The field len is now set; we can generate the bit codes
-        Self::gen_codes(&self.bl_count, tree.borrow_mut().deref_mut(), desc.max_code);
-    }
+        // 生成所有树节点的编码
+        self.gen_codes(tree_type, TreeKind::Dynamic);
+    }       
+    
+
 
     /// Remove the smallest element from the heap and adjust the heap.
     /// Returns the index of the smallest node.
-    fn pq_remove(&mut self, tree: &[CtData]) -> usize {
-        // The smallest item is at the root of the heap (index 0 in zero-based indexing)
-        let top = self.heap[SMALLEST]; // Remove the smallest item
-        // println!("top: {}", top);
-        // println!("heap_len: {}", self.heap_len);
-        // println!("heap_v: {}", self.heap[self.heap_len - 1]);
-        // println!("SMALLEST: {}", SMALLEST);
+    fn pq_remove(&mut self, tree_type: TreeType) -> usize {
+        // The smallest item is at the root of the heap
+        let top = self.heap[SMALLEST];
 
         // Move the last item to the root and reduce the heap size
         self.heap[SMALLEST] = self.heap[self.heap_len];
         self.heap_len -= 1;
 
         // Restore the heap property by moving down from the root
-        self.pq_down_heap(tree, SMALLEST);
+        self.pq_down_heap(tree_type, SMALLEST);
 
         top as usize // Return the index of the smallest node
     }
@@ -943,52 +1063,91 @@ impl<'a> Trees<'a> {
     /// array bl_count contains the frequencies for each bit length.
     /// The length opt_len is updated; static_len is also updated if stree is
     /// not null.
-    fn gen_bitlen(&mut self, state: &GzipState, desc: &mut TreeDesc) {
-        let tree = &mut desc.dyn_tree; // Dynamic tree
-        let extra = desc.extra_bits;   // Extra bits array
-        let base = desc.extra_base;    // Base index for extra bits
-        let max_code = desc.max_code;  // Maximum code with non-zero frequency
-        let max_length = desc.max_length; // Maximum allowed bit length
-        let stree = &desc.static_tree;  // Static tree (if any)
+    fn gen_bitlen(&mut self, state: &GzipState, tree_type: TreeType) {
+        // 先获取所需的基本信息
+        let (max_code, max_length, extra_base) = match tree_type {
+            TreeType::Literal => (self.l_desc.max_code, self.l_desc.max_length, self.l_desc.extra_base),
+            TreeType::Distance => (self.d_desc.max_code, self.d_desc.max_length, self.d_desc.extra_base),
+            TreeType::BitLength => (self.bl_desc.max_code, self.bl_desc.max_length, self.bl_desc.extra_base),
+        };
 
-        let mut overflow = 0; // Number of elements with bit length too large
+        let mut overflow = 0;
 
-        // Initialize bl_count array to zero
+        // 初始化 bl_count
         for bits in 0..=MAX_BITS {
-            self.bl_count[bits as usize] = 0;
+            self.bl_count[bits] = 0;
         }
 
-        // In a first pass, compute the optimal bit lengths (which may overflow)
-        tree.borrow_mut()[self.heap[self.heap_max as usize] as usize].len = 0; // Root of the heap
+        // 在第一遍中，计算最优位长度
+        let heap_max_idx = self.heap[self.heap_max] as usize;
+        // println!("hpidx={:?} hpmx={:?}",heap_max_idx, self.heap_max);
+        match tree_type {
+            TreeType::Literal => self.dyn_ltree[heap_max_idx].len = 0,
+            TreeType::Distance => self.dyn_dtree[heap_max_idx].len = 0,
+            TreeType::BitLength => self.bl_tree[heap_max_idx].len = 0,
+        }
 
-        for h in (self.heap_max + 1)..self.heap_len {
-            let n = self.heap[h as usize] as usize;
-            let mut bits = tree.borrow()[tree.borrow()[n].dad as usize].len + 1;
+        // 第一遍：计算最优位长度
+        for h in (self.heap_max + 1)..HEAP_SIZE {
+            let n = self.heap[h] as usize;
+            
+            // 获取父节点的长度并加1
+            let dad_len = match tree_type {
+                TreeType::Literal => self.dyn_ltree[self.dyn_ltree[n].dad as usize].len,
+                TreeType::Distance => self.dyn_dtree[self.dyn_dtree[n].dad as usize].len,
+                TreeType::BitLength => self.bl_tree[self.bl_tree[n].dad as usize].len,
+            };
+            let mut bits = dad_len + 1;
 
+            // 检查是否超过最大长度
             if bits > max_length as u16 {
                 bits = max_length as u16;
                 overflow += 1;
             }
 
-            tree.borrow_mut()[n].len = bits;
+            // 设置节点的长度
+            match tree_type {
+                TreeType::Literal => self.dyn_ltree[n].len = bits,
+                TreeType::Distance => self.dyn_dtree[n].len = bits,
+                TreeType::BitLength => self.bl_tree[n].len = bits,
+            }
 
-            // If it's not a leaf node, continue
+            // 如果不是叶子节点，继续
             if n > max_code as usize {
                 continue;
             }
 
-            // Count the frequencies for each bit length
+            // 更新计数和长度
             self.bl_count[bits as usize] += 1;
-
+            
+            // 计算额外位
             let mut xbits = 0;
-            if n >= base {
-                xbits = extra.as_ref().unwrap()[n - base];
+            if n >= extra_base {
+                xbits = match tree_type {
+                    TreeType::Literal => EXTRA_LBITS[n - extra_base],
+                    TreeType::Distance => EXTRA_DBITS[n - extra_base],
+                    TreeType::BitLength => EXTRA_BLBITS[n - extra_base],
+                };
             }
 
-            let f = tree.borrow()[n].freq as u64;
-            self.opt_len += f * (bits as u64 + xbits as u64);
-            if let Some(stree) = stree {
-                self.static_len += f * (stree.borrow()[n].len as u64 + xbits as u64);
+            // 获取频率
+            let freq = match tree_type {
+                TreeType::Literal => self.dyn_ltree[n].freq,
+                TreeType::Distance => self.dyn_dtree[n].freq,
+                TreeType::BitLength => self.bl_tree[n].freq,
+            } as u64;
+
+            // 更新优化长度
+            self.opt_len += freq * (bits as u64 + xbits as u64);
+
+            // 更新静态长度（如果不是位长度树）
+            if tree_type != TreeType::BitLength {
+                let static_len = match tree_type {
+                    TreeType::Literal => self.static_ltree[n].len,
+                    TreeType::Distance => self.static_dtree[n].len,
+                    TreeType::BitLength => 0,
+                } as u64;
+                self.static_len += freq * (static_len + xbits as u64);
             }
         }
 
@@ -996,12 +1155,69 @@ impl<'a> Trees<'a> {
             return;
         }
 
-        // Adjust bit lengths to eliminate overflow
-        self.adjust_bit_lengths(state, overflow, max_length as i32);
+        // 处理溢出情况
+        if state.verbose > 0 {
+            eprintln!("\nbit length overflow");
+        }
 
-        // Now recompute all bit lengths, scanning in increasing frequency
-        self.recompute_bit_lengths(state, tree.borrow_mut().deref_mut(), max_code, max_length as i32);
+        // 调整溢出的位长度
+        loop {
+            let mut bits = max_length as usize - 1;
+            while self.bl_count[bits] == 0 {
+                bits -= 1;
+            }
+            self.bl_count[bits] -= 1;      // 将一个叶子节点下移
+            self.bl_count[bits + 1] += 2;  // 将一个溢出项作为其兄弟移动
+            self.bl_count[max_length as usize] -= 1;
+            overflow -= 2;
+            
+            if overflow <= 0 {
+                break;
+            }
+        }
+
+        // 重新计算所有位长度
+        let mut h = HEAP_SIZE;
+        for bits in (1..=max_length as usize).rev() {
+            let mut n = self.bl_count[bits];
+            while n > 0 {
+                h -= 1;
+                let m = self.heap[h] as usize;
+                if m > max_code as usize {
+                    continue;
+                }
+
+                let current_len = match tree_type {
+                    TreeType::Literal => self.dyn_ltree[m].len,
+                    TreeType::Distance => self.dyn_dtree[m].len,
+                    TreeType::BitLength => self.bl_tree[m].len,
+                };
+
+                if current_len != bits as u16 {
+                    if state.verbose > 1 {
+                        eprintln!("code {} bits {}->{}", m, current_len, bits);
+                    }
+                    
+                    // 更新优化长度
+                    let freq = match tree_type {
+                        TreeType::Literal => self.dyn_ltree[m].freq,
+                        TreeType::Distance => self.dyn_dtree[m].freq,
+                        TreeType::BitLength => self.bl_tree[m].freq,
+                    } as u64;
+                    self.opt_len += ((bits as i64 - current_len as i64) * freq as i64) as u64;
+                    
+                    // 更新长度
+                    match tree_type {
+                        TreeType::Literal => self.dyn_ltree[m].len = bits as u16,
+                        TreeType::Distance => self.dyn_dtree[m].len = bits as u16,
+                        TreeType::BitLength => self.bl_tree[m].len = bits as u16,
+                    }
+                }
+                n -= 1;
+            }
+        }
     }
+
 
     /// Adjust bit lengths to eliminate overflow
     fn adjust_bit_lengths(&mut self, state: &GzipState, mut overflow: i32, max_length: i32) {
@@ -1068,40 +1284,21 @@ impl<'a> Trees<'a> {
     /// Restore the heap property by moving down the tree starting at node `k`,
     /// exchanging a node with the smallest of its two children if necessary,
     /// stopping when the heap property is re-established (each parent smaller than its two children).
-    fn pq_down_heap(&mut self, tree: &[CtData], mut k: usize) {
-        let heap_len = self.heap_len;
-        // println!("k: {}", k);
-
+    fn pq_down_heap(&mut self, tree_type: TreeType, mut k: usize) {
         let v = self.heap[k];
+        let mut j = k << 1;
 
-        let mut j = k << 1; 
-
-        while j <= heap_len {
-            // let mut j = 2 * k + 1; // Left child index in zero-based array
-
-            // if j >= heap_len {
-            //     break;
-            // }
-            // println!("j: {}", j);
-
-            // If right child exists and is smaller than left child, use right child
-            if j < heap_len && self.smaller(tree, self.heap[j + 1] as usize, self.heap[j] as usize) {
-                j += 1; // Move to right child
+        while j <= self.heap_len {
+            if j < self.heap_len && self.smaller(tree_type, self.heap[j + 1] as usize, self.heap[j] as usize) {
+                j += 1;
             }
-            // println!("v: {} j: {}", v, j);
-            // println!("heap[j]: {}", self.heap[j]);
 
-            // If parent node v is smaller than smallest child, stop
-            if self.smaller(tree, v as usize, self.heap[j] as usize) {
+            if self.smaller(tree_type, v as usize, self.heap[j] as usize) {
                 break;
             }
 
-            // Move the smallest child up
             self.heap[k] = self.heap[j];
-
-            // Move down to child's position
             k = j;
-
             j <<= 1;
         }
 
@@ -1110,20 +1307,24 @@ impl<'a> Trees<'a> {
 
     /// Compare two nodes in the heap based on frequencies and depths.
     /// Returns true if node `n` is "smaller" than node `m`.
-    fn smaller(&self, tree: &[CtData], n: usize, m: usize) -> bool {
-        tree[n].freq < tree[m].freq
-            || (tree[n].freq == tree[m].freq && self.depth[n] <= self.depth[m])
+    fn smaller(&self, tree_type: TreeType, n: usize, m: usize) -> bool {
+        let (freq_n, freq_m) = match tree_type {
+            TreeType::Literal => (self.dyn_ltree[n].freq, self.dyn_ltree[m].freq),
+            TreeType::Distance => (self.dyn_dtree[n].freq, self.dyn_dtree[m].freq),
+            TreeType::BitLength => (self.bl_tree[n].freq, self.bl_tree[m].freq),
+        };
+
+        freq_n < freq_m || (freq_n == freq_m && self.depth[n] <= self.depth[m])
     }
 
     fn build_bl_tree(&mut self, state: &GzipState) -> i32 {
         let mut max_blindex: i32;
 
         // Determine the bit length frequencies for literal and distance trees
-        Self::scan_tree(&mut self.bl_tree, self.dyn_ltree.borrow_mut().deref_mut(), self.l_desc.max_code);
-        Self::scan_tree(&mut self.bl_tree, self.dyn_dtree.borrow_mut().deref_mut(), self.d_desc.max_code);
-
+        self.scan_tree(TreeType::Literal);
+        self.scan_tree(TreeType::Distance);
         // Build the bit length tree
-        self.build_tree(state, &mut self.bl_desc.clone());
+        self.build_tree(state,TreeType::BitLength);
 
         // At this point, opt_len includes the length of the tree representations,
         // except the lengths of the bit lengths codes and the 5+5+4 bits for the counts.
@@ -1149,10 +1350,20 @@ impl<'a> Trees<'a> {
         max_blindex
     }
 
-    fn scan_tree(bl_tree: &mut [CtData; 2 * BL_CODES + 1], tree: &mut [CtData], max_code: i32) {
+    fn scan_tree(&mut self, tree_type: TreeType) {
+        // 先获取需要的值，避免后续重复借用
+        let (tree_data, max_code) = match tree_type {
+            TreeType::Literal => (&self.dyn_ltree[..], self.l_desc.max_code),
+            TreeType::Distance => (&self.dyn_dtree[..], self.d_desc.max_code),
+            TreeType::BitLength => (&self.bl_tree[..], self.bl_desc.max_code),
+        };
+
+        // 创建一个临时数组来存储需要的长度值
+        let mut lengths: Vec<u16> = tree_data.iter().map(|node| node.len).collect();
+        
         let mut prevlen: i32 = -1;           // Last emitted length
         let mut curlen: i32;                 // Length of current code
-        let mut nextlen: i32 = tree[0].len as i32; // Length of next code
+        let mut nextlen: i32 = lengths[0] as i32; // Length of next code
         let mut count: i32 = 0;              // Repeat count of the current code
         let mut max_count: i32;              // Max repeat count
         let mut min_count: i32;              // Min repeat count
@@ -1165,16 +1376,19 @@ impl<'a> Trees<'a> {
             min_count = 4;
         }
 
-        // Set a guard value to prevent out-of-bounds access
-        if (max_code + 1) as usize >= tree.len() {
+        // Set a guard value
+        if (max_code + 1) as usize >= lengths.len() {
             panic!("Tree array is too small");
         }
-        tree[(max_code + 1) as usize].len = 0xFFFF;
 
         for n in 0..=max_code {
             let n = n as usize;
             curlen = nextlen;
-            nextlen = tree[n + 1].len as i32;
+            nextlen = if n + 1 <= max_code as usize {
+                lengths[n + 1] as i32
+            } else {
+                0
+            };
 
             count += 1;
 
@@ -1183,16 +1397,16 @@ impl<'a> Trees<'a> {
             } else {
                 if count < min_count {
                     // Update the frequency for the current code length
-                    bl_tree[curlen as usize].freq += count as u16;
+                    self.bl_tree[curlen as usize].freq += count as u16;
                 } else if curlen != 0 {
                     if curlen != prevlen {
-                        bl_tree[curlen as usize].freq += 1;
+                        self.bl_tree[curlen as usize].freq += 1;
                     }
-                    bl_tree[REP_3_6].freq += 1;
+                    self.bl_tree[REP_3_6].freq += 1;
                 } else if count <= 10 {
-                    bl_tree[REPZ_3_10].freq += 1;
+                    self.bl_tree[REPZ_3_10].freq += 1;
                 } else {
-                    bl_tree[REPZ_11_138].freq += 1;
+                    self.bl_tree[REPZ_11_138].freq += 1;
                 }
 
                 count = 0;
@@ -1211,4 +1425,5 @@ impl<'a> Trees<'a> {
             }
         }
     }
+    
 }

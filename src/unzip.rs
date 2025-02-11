@@ -128,7 +128,7 @@ pub fn unzip (state: &mut GzipState) -> io::Result<()> {
 
     // Validate decompression
     let mut dp_crc = state.updcrc(Some(&state.outbuf.clone()), 0);
-    // println!("dp_crc={:?}\n",dp_crc);
+    // println!("orig_crc={:?} dp_crc={:?}\n",orig_crc, dp_crc);
     if  u32::from(orig_crc) != dp_crc {
         // let backtrace = Backtrace::capture(); println!("{:?}", backtrace);
         eprintln!(

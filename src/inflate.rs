@@ -259,7 +259,10 @@ impl Inflate {
         if state.inptr < state.insize {
             let byte = state.inbuf[state.inptr];
             state.inptr += 1;
-            // println!("gb:{:?} {:?}", state.inptr,state.inbuf[state.inptr]);
+            // if state.inptr < 100{
+            //     println!("gb:{:?} {:?}", state.inptr,state.inbuf[state.inptr]);
+            // }
+            
             Ok(byte)
         } else {
             state.outcnt = w; // This part needs clarification based on your code
@@ -1300,6 +1303,8 @@ impl Inflate {
         b = self.bb;
         k = self.bk;
         w = state.outcnt as u32;
+        // println!("w={:?}",w);
+        
 
         // Read the last block bit
         self.need_bits(state, &mut k, &mut b, 1, w.try_into().unwrap());
@@ -1314,6 +1319,7 @@ impl Inflate {
         // Restore the global bit buffer
         self.bb = b;
         self.bk = k;
+        // println!("w={:?} t={:?}",w, t);
 
         // Decompress based on the block type
         match t {

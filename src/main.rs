@@ -86,7 +86,7 @@ const CRC_32_TAB: [u32; 256] = [
   0xe5d5be0d, 0x7cdcefb7, 0x0bdbdf21, 0x86d3d2d4, 0xf1d4e242,
   0x68ddb3f8, 0x1fda836e, 0x81be16cd, 0xf6b9265b, 0x6fb077e1,
   0x18b74777, 0x88085ae6, 0xff0f6a70, 0x66063bca, 0x11010b5c,
-  0x8f659eff, 0xfe62ae69, 0x616bffd3, 0x166ccf45, 0xa00ae278,
+  0x8f659eff, 0xf862ae69, 0x616bffd3, 0x166ccf45, 0xa00ae278,
   0xd70dd2ee, 0x4e048354, 0x3903b3c2, 0xa7672661, 0xd06016f7,
   0x4969474d, 0x3e6e77db, 0xaed16a4a, 0xd9d65adc, 0x40df0b66,
   0x37d83bf0, 0xa9bcae53, 0xdebb9ec5, 0x47b2cf7f, 0x30b5ffe9,
@@ -223,6 +223,7 @@ struct GzipState {
     inbuf: [u8; INBUFSIZ + INBUF_EXTRA], // Input buffer
     outbuf: [u8; OUTBUFSIZ + OUTBUF_EXTRA], // Output buffer
     window: [u8; 2 * WSIZE], // Output buffer
+    crc: u32,
     crc16_digest: u32,
     first_time: bool,
     record_io: bool,
@@ -294,6 +295,7 @@ impl GzipState {
             inbuf: [0; INBUFSIZ + INBUF_EXTRA],
             outbuf: [0; OUTBUFSIZ + OUTBUF_EXTRA],
             window: [0; 2 * WSIZE],
+            crc: 0x00000000,
             crc16_digest: 0x00000000,
             first_time: false,
             record_io: false,
@@ -382,89 +384,103 @@ impl GzipState {
 
         while let Some(arg) = arg_iter.next() {
             if arg.starts_with('-') && arg.len() > 1 {
-                match &arg[1..] {
-                    "a" | "--ascii" => self.ascii = true,
-                    "b" => {
-                        if let Some(bits_arg) = arg_iter.next() {
-                            self.maxbits = bits_arg.parse().unwrap_or_else(|_| {
-                                eprintln!("{}: -b operand is not an integer", self.program_name);
+                for (i, c) in arg[1..].chars().enumerate() {
+                    match c {
+                        'a' => self.ascii = true,
+                        'c' => self.to_stdout = true,
+                        'd' => self.decompress = true,
+                        'f' => self.force += 1,
+                        'h' | 'H' => {
+                            self.help();
+                            self.do_exit(OK);
+                        }
+                        'k' => self.keep = true,
+                        'l' => {
+                            self.list = true;
+                            self.decompress = true;
+                            self.to_stdout = true;
+                        }
+                        'L' => {
+                            self.license();
+                            self.do_exit(OK);
+                        }
+                        'n' => {
+                            self.no_name = Some(true);
+                            self.no_time = Some(true);
+                        }
+                        'N' => {
+                            self.no_name = Some(false);
+                            self.no_time = Some(false);
+                        }
+                        'q' => {
+                            self.quiet = true;
+                            self.verbose = 0;
+                        }
+                        'r' => self.recursive = true,
+                        't' => {
+                            self.test = true;
+                            self.decompress = true;
+                            self.to_stdout = true;
+                        }
+                        'v' => {
+                            self.verbose += 1;
+                            self.quiet = false;
+                        }
+                        'V' => {
+                            self.version();
+                            self.do_exit(OK);
+                        }
+                        'Z' => self.do_lzw = true,
+                        '1'..='9' => self.level = c.to_digit(10).unwrap() as i32,
+                        // 需要参数的选项
+                        'b' | 'S' => {
+                            if i < arg[1..].len() - 1 {
+                                // 如果参数直接跟在选项后面
+                                let value = &arg[i+2..];
+                                match c {
+                                    'b' => {
+                                        self.maxbits = value.parse().unwrap_or_else(|_| {
+                                            eprintln!("{}: -b operand is not an integer", self.program_name);
+                                            self.try_help();
+                                        });
+                                    }
+                                    'S' => {
+                                        self.z_suffix = value.to_string();
+                                        self.z_len = self.z_suffix.len();
+                                    }
+                                    _ => unreachable!(),
+                                }
+                                break;
+                            } else if let Some(next_arg) = arg_iter.next() {
+                                // 如果参数在下一个参数中
+                                match c {
+                                    'b' => {
+                                        self.maxbits = next_arg.parse().unwrap_or_else(|_| {
+                                            eprintln!("{}: -b operand is not an integer", self.program_name);
+                                            self.try_help();
+                                        });
+                                    }
+                                    'S' => {
+                                        self.z_suffix = next_arg.to_string();
+                                        self.z_len = self.z_suffix.len();
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            } else {
+                                eprintln!("{}: option requires an argument -- '{}'", self.program_name, c);
                                 self.try_help();
-                            });
-                        } else {
-                            eprintln!("{}: option requires an argument -- 'b'", self.program_name);
+                            }
+                        }
+                        _ => {
+                            eprintln!("{}: unknown option -- '{}'", self.program_name, c);
                             self.try_help();
                         }
-                    }
-                    "c" => self.to_stdout = true,
-                    "d" => self.decompress = true,
-                    "H" => {
-                        self.decompress = true;
-                        self.test_huft = true;
-                    }
-                    "f" => self.force += 1,
-                    "h" | "H" => {
-                        self.help();
-                        self.do_exit(OK);
-                    }
-                    "k" => self.keep = true,
-                    "l" => {
-                        self.list = true;
-                        self.decompress = true;
-                        self.to_stdout = true;
-                    }
-                    "L" => {
-                        self.license();
-                        self.do_exit(OK);
-                    }
-                    "m" => self.no_time = Some(true),
-                    "M" => self.no_time = Some(false),
-                    "n" => {
-                        self.no_name = Some(true);
-                        self.no_time = Some(true);
-                    }
-                    "N" => {
-                        self.no_name = Some(false);
-                        self.no_time = Some(false);
-                    }
-                    "q" => {
-                        self.quiet = true;
-                        self.verbose = 0;
-                    }
-                    "r" => self.recursive = true,
-                    "S" => {
-                        if let Some(suffix_arg) = arg_iter.next() {
-                            self.z_suffix = suffix_arg.clone();
-                            self.z_len = self.z_suffix.len();
-                        } else {
-                            eprintln!("{}: -S requires a suffix", self.program_name);
-                            self.try_help();
-                        }
-                    }
-                    "t" => {
-                        self.test = true;
-                        self.decompress = true;
-                        self.to_stdout = true;
-                    }
-                    "v" => {
-                        self.verbose += 1;
-                        self.quiet = false;
-                    }
-                    "V" => {
-                        self.version();
-                        self.do_exit(OK);
-                    }
-                    "Z" => self.do_lzw = true,
-                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
-                        self.level = arg[1..].parse::<i32>().unwrap();
-                    }
-                    _ => {
-                        eprintln!("{}: unknown option -- '{}'", self.program_name, &arg[1..]);
-                        self.try_help();
                     }
                 }
             } else {
                 self.args.push(arg.clone());
             }
+    
         }
     }
 
@@ -1172,10 +1188,11 @@ impl GzipState {
 
     fn updcrc(&mut self, buf: Option<&[u8]>, len: usize) -> u32 {
         if buf.is_none() {
+            // println!("is_none");
             self.crc16_digest = 0xffffffff;
         } else {
             self.crc16_digest = self.crc16_digest; // 使用当前的 crc16_digest
-            // println!("crc={:?}",self.crc16_digest);
+            // println!("crc={:?} len={:?}",self.crc16_digest, len);
             let bytes = buf.unwrap();
             // println!("bytes={:?}", &bytes[..10]);
             let mut i = 0;
@@ -1186,8 +1203,10 @@ impl GzipState {
             }
         }
         let count = COUNT.fetch_add(1, Ordering::SeqCst);
+        // println!("crc={:?}",self.crc16_digest);
         self.crc16_digest ^ 0xffffffff // 返回最终的 CRC 值
     }
+    
 
     fn gzip_base_name<'a>(&self, fname: &'a str) -> &'a str {
         Path::new(fname)
